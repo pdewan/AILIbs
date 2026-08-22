@@ -230,5 +230,8 @@
 	<classpathentry kind="lib" path="C:/Users/Prasun/.m2/repository/ai/djl/huggingface/tokenizers/0.36.0/tokenizers-0.36.0.jar"/>
 	<classpathentry kind="lib" path="D:/dewan_backup/Java/GraderBasics/lib/diff_match_patch-current.jar"/>
 	<classpathentry kind="lib" path="D:/dewan_backup/Java/GraderBasics/lib/datafaker-2.4.0.jar"/>
+	<classpathentry kind="lib" path="D:/dewan_backup/Java/lib/tinylog-impl-2.6.2.jar"/>
+	<classpathentry kind="lib" path="D:/dewan_backup/Java/lib/tinylog-api-2.6.2.jar"/>
+	<classpathentry kind="lib" path="D:/dewan_backup/Java/lib/slf4j-tinylog-2.6.2.jar"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>
