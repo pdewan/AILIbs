@@ -1,0 +1,34 @@
+src
+  ai_libs
+    demo
+      AllClientsDemo.java (201 lines)
+  al_libs
+    logging
+      ABasicTextManager.java (335 lines)
+      AFutureLogSender.java (23 lines)
+      AILibLogSender.java (235 lines)
+      AILibServerLogSender.java (13 lines)
+      AILogPrinter.java (16 lines)
+      AILogSender.java (15 lines)
+      AILogSenderFactory.java (25 lines)
+      AILogSenderKind.java (6 lines)
+      ALogSendingRunnable.java (110 lines)
+      ASourceAndTestLogWriter.java (459 lines)
+      AbstractAILogSender.java (39 lines)
+      BasicTextManager.java (34 lines)
+      DirectoryUtils.java (472 lines)
+      LogEntryKind.java (7 lines)
+      LogNameManager.java (243 lines)
+      LogProcessor.java (220 lines)
+      LogSender.java (15 lines)
+      LogSenderFactory.java (45 lines)
+      LogSenderKind.java (6 lines)
+      OllamaLoggingControl.java (64 lines)
+      SendingData.java (47 lines)
+      SourceLogKind.java (6 lines)
+    s_eliza
+      BasicElizaClient.java (213 lines)
+      ElizaClient.java (33 lines)
+      ElizaMessage.java (21 lines)
+      ElizaResponse.java (28 lines)
+      ElizaRole.java (7 lines)

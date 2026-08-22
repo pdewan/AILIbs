@@ -1,0 +1,235 @@
+package al_libs.logging;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Calendar;
+
+import wiremock.net.minidev.json.JSONObject;
+
+
+
+public class AILibLogSender {
+	private static String logSenderName = "AILibLogSender";
+	
+	private static long totalLogSizeSent = 0;
+	private static long totalTimeTaken = 0;
+	private static long totalSends = 0;
+	private static final String TIME_STATISTICS_FILE_NAME = "timeStatistics.csv";
+//	private static final String reportURL=
+//			"https://us-east-1.aws.data.mongodb-api.com/app/rest-api-vsfoo/endpoint/add_log?db=studies&collection=dewan-localchecks";
+	private static final String reportURL=
+			"https://lb4qj4y2suhukbhyrxmfy47qqe0ymmpf.lambda-url.us-east-1.on.aws?db=studies&collection=dewan-fall-2025";
+	private static final String password = "sYCUBa*shZKU4F-yxHrTk8D7FHo4xbBBV.-BK!-L";
+//	private static final String reportURL="https://us-south.functions.appdomain.cloud/api/v1/web/ORG-UNC-dist-seed-james_dev/cyverse/add-cyverse-log";
+	private static String lastLogFilePath = null;
+	
+	private static File lastLogDirectory = null;
+	
+//	private static final String uuidFile="LogsUUID.txt";
+//	private static final File fileStore;
+//	
+//	static {
+//		File searchLoc = new File(System.getProperty("user.home")+"/helper-config/");
+//		if(searchLoc.exists())
+//			fileStore=new File(System.getProperty("user.home")+"/helper-config/"+uuidFile);
+//		else
+//			fileStore=new File("./Logs/LocalChecks/"+uuidFile);
+//	}
+	
+	public static void appendStatistics()  {
+		if (totalSends > 0) {
+		appendStatistics(totalSends + "," + totalLogSizeSent + "," + totalTimeTaken);
+		}
+	}
+
+	public static void appendStatistics(final String aStats)  {
+		PrintWriter out = null;
+		try {
+		if (lastLogDirectory == null) {
+			return;
+		}
+		File aStatsFile = new File(lastLogDirectory, TIME_STATISTICS_FILE_NAME);
+		
+		
+		    out = new PrintWriter(new BufferedWriter(new FileWriter(aStatsFile, true)));
+		    out.println(aStats);
+		} catch (IOException e) {
+		    System.err.println(e);
+		} finally {
+		    if (out != null) {
+		        out.close();
+		    }
+		}
+	}
+	
+	public static void sendToServer(SendingData sd) throws Exception {
+		sendToServer(sd.getLogEntryKind(), sd.getLogFileName(), sd.getLog(),sd.getIteration());
+
+	}
+	
+//	private static void maybeUpdateLogDirectory(String aLogFilePath) {
+//		if (aLogFilePath.equals(lastLogFilePath)) {
+//			return;
+//		}
+//		File aLogFile = new File(aLogFilePath);
+//		lastLogFilePath = aLogFilePath;
+//		lastLogDirectory = aLogFile.getParentFile();
+//	}
+	
+	public static void sendToServer(LogEntryKind aLogEntryKind, String aLogFilePath, String log, int sessionId) throws Exception{		
+	
+//		if (anIsTests) {
+		
+		File aFile = new File(aLogFilePath);
+		long aStartTime = System.currentTimeMillis();
+		JSONObject message = new JSONObject();
+		String aLogId = aLogEntryKind + " " + LogNameManager.getLoggedName()+" "+ " "+sessionId + " " + System.currentTimeMillis()+ " " + aFile.getName();
+
+//		String aLogId = anIsTests + " " + LogNameManager.getLoggedName()+" "+ " "+sessionId + " " + System.currentTimeMillis()+ " " + aFile.getName();
+//		message.put("log_id",System.currentTimeMillis()+"-"+sessionId);
+		message.put("log_id",aLogId);
+
+		message.put("session_id",Integer.toString(sessionId));
+		message.put("machine_id",LogNameManager.getLoggedName());
+
+//		message.put("machine_id",getHashMachineId());
+		message.put("log_type", logSenderName);
+		message.put("password",password);
+//		String BS = "\\\\\\";
+//		if (aLogEntryKind != LogEntryKind.SCHEMA) {
+		String BS = " B*S ";
+		log = log.replaceAll("\n",  BS + "n");
+		log = log.replaceAll("\r", BS + "r");
+		log = log.replaceAll("	", BS + "t");
+		log = log.replaceAll("\t", BS + "t");
+		log = log.replaceAll("\f", BS + "f");
+		log = log.replaceAll("\"",  BS + "q");
+		log = log.replaceAll("\\=", BS + "=" );
+		log = log.replaceAll("\\-", BS + "-" );
+		log = log.replaceAll("\\+", BS + "+" );
+//		}
+
+//		log = log.replaceAll("\\", "BSBS");
+
+
+		
+
+//		log = log.replaceAll("\\", "");
+		JSONObject logJSON = new JSONObject();
+//		log = JSON
+		logJSON.put("json", log);
+		
+
+		
+		message.put("log", logJSON);
+		if (log.length() == 0) {
+			return;
+		}
+//		System.out.println("Posting message:" +message );
+		JSONObject ret = post(message,reportURL);
+//		System.out.println("Return value from post:" + ret);
+		if(ret==null) {
+			Thread.sleep(5000);
+			post(message,reportURL);
+		}
+		long anEndTime = System.currentTimeMillis();
+		long aSendTime = anEndTime - aStartTime;
+		totalSends++;
+		totalLogSizeSent += log.length();
+		totalTimeTaken += aSendTime;
+		
+	}
+	
+
+	
+	@SuppressWarnings("unused")
+	private static String determineSemester() {
+		Calendar c = Calendar.getInstance();
+		int year = c.get(Calendar.YEAR);
+		Calendar compare = Calendar.getInstance();
+		compare.set(year, Calendar.MAY, 5);
+		if(c.before(compare))
+			return "Spring"+year;
+		compare.set(year, Calendar.JUNE, 20);
+		if(c.before(compare))
+			return "SummerI"+year;
+		compare.set(year, Calendar.AUGUST, 5);
+		if(c.before(compare))
+			return "SummerII"+year;
+		return "Fall"+year;
+	}
+	static boolean logErrorMessageSent = false;
+	public static JSONObject post(JSONObject request, String urlString) {
+		BufferedReader reader;
+		String line;
+		StringBuffer sb = new StringBuffer();
+		int status = 500;
+		JSONObject body = new JSONObject();
+		try {
+			body.put("body", request);
+		} catch (Exception e1) {
+			System.err.println(e1.getMessage());
+//			e1.printStackTrace();
+		}
+
+		try {
+			URL url = new URL(urlString);
+			HttpURLConnection conn = (HttpURLConnection)url.openConnection();
+			conn.setDoOutput(true);
+			conn.setRequestMethod("POST");
+			conn.setRequestProperty("Content-Type", "application/json");
+			conn.setRequestProperty("Accept", "application/json");
+			conn.setRequestProperty("Content-Length", (body.toString().length()+2)+"");
+			OutputStream os = conn.getOutputStream();
+			byte[] input = body.toString().getBytes();
+//			System.out.println(body.toString(4));
+			os.write(input, 0, input.length);
+			os.write("\r\n".getBytes());
+			conn.setConnectTimeout(5000);
+			conn.setReadTimeout(5000);
+			
+			status = conn.getResponseCode();
+			
+			if (status > 299) {
+				reader = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
+				while ((line = reader.readLine()) != null) {
+					sb.append(line);
+				}
+				reader.close();
+			} else {
+				reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+				while ((line = reader.readLine()) != null) {
+					sb.append(line);
+				}
+				reader.close();
+			}
+			conn.disconnect();
+		} catch (Exception e) {
+			if (!logErrorMessageSent) {
+			System.err.println("Error sending logs:\n"+e.getMessage());
+			logErrorMessageSent = true;
+			}
+			return null;
+//			e.printStackTrace();
+		} 
+		try {
+			return new JSONObject();
+		} catch (Exception e) {
+		}
+		return null;
+	}
+	public static String getLogSenderName() {
+		return logSenderName;
+	}
+	public static void setLogSenderName(String logSenderName) {
+		AILibLogSender.logSenderName = logSenderName;
+	}
+}
