@@ -1,4 +1,4 @@
-package al_libs.s_eliza;
+package ai_libs.s_eliza;
 
 import java.util.ArrayList;
 import java.util.Arrays;

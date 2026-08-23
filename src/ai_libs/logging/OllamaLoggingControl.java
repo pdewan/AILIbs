@@ -1,4 +1,6 @@
-package al_libs.logging;
+package ai_libs.logging;
+
+import ai_libs.logging.LogProcessor;
 
 public final class OllamaLoggingControl {
 	public static final String DEFAULT_LOGGING_LEVEL = "warn";

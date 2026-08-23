@@ -1,4 +1,8 @@
-package al_libs.logging;
+package ai_libs.logging;
+
+import ai_libs.logging.LogEntryKind;
+import ai_libs.logging.SendingData;
+
 public class SendingData {
 	private final String logFileName;
 	private final String log;

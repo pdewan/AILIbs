@@ -1,4 +1,7 @@
-package al_libs.logging;
+package ai_libs.logging;
+
+import ai_libs.logging.AbstractAILogSender;
+import ai_libs.logging.LogEntryKind;
 
 public class AILogPrinter extends AbstractAILogSender {
 

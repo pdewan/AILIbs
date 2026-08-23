@@ -1,4 +1,4 @@
-package al_libs.logging;
+package ai_libs.logging;
 
 
 import java.io.BufferedReader;
@@ -8,6 +8,9 @@ import java.io.FileWriter;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.security.MessageDigest;
+
+import ai_libs.logging.LogNameManager;
+
 import java.nio.charset.StandardCharsets;
 
 public class LogNameManager {

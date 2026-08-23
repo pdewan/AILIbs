@@ -1,4 +1,4 @@
-package al_libs.logging;
+package ai_libs.logging;
 
 import java.io.BufferedReader;
 import java.io.File;

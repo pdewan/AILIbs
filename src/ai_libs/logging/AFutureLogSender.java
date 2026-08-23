@@ -1,7 +1,11 @@
-package al_libs.logging;
+package ai_libs.logging;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+
+import ai_libs.logging.AILogSenderFactory;
+import ai_libs.logging.LogSender;
+import ai_libs.logging.SendingData;
 
 public class AFutureLogSender implements LogSender {
 

@@ -1,6 +1,13 @@
-package al_libs.logging;
+package ai_libs.logging;
 
 import java.io.File;
+
+import ai_libs.logging.AILogSender;
+import ai_libs.logging.ASourceAndTestLogWriter;
+import ai_libs.logging.LogEntryKind;
+import ai_libs.logging.LogProcessor;
+import ai_libs.logging.SendingData;
+import ai_libs.logging.SourceLogKind;
 
 public abstract class AbstractAILogSender implements AILogSender {
 

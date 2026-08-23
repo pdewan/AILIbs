@@ -1,6 +1,9 @@
-package al_libs.logging;
+package ai_libs.logging;
 
 import java.io.File;
+
+import ai_libs.logging.LogEntryKind;
+import ai_libs.logging.SendingData;
 
 public interface AILogSender {
 	String sendToServer(SendingData aSendingData) throws Exception;

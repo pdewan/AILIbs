@@ -1,4 +1,10 @@
-package al_libs.logging;
+package ai_libs.logging;
+
+import ai_libs.logging.AILibServerLogSender;
+import ai_libs.logging.AILogPrinter;
+import ai_libs.logging.AILogSender;
+import ai_libs.logging.AILogSenderKind;
+import ai_libs.logging.LogProcessor;
 
 public class AILogSenderFactory {
 	private static AILogSender aiLogSender;

@@ -1,4 +1,4 @@
-package al_libs.logging;
+package ai_libs.logging;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -12,6 +12,10 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Calendar;
 
+import ai_libs.logging.AILibLogSender;
+import ai_libs.logging.LogEntryKind;
+import ai_libs.logging.LogNameManager;
+import ai_libs.logging.SendingData;
 import wiremock.net.minidev.json.JSONObject;
 
 

@@ -10,9 +10,10 @@ import com.google.genai.types.Content;
 import com.google.genai.types.GenerateContentResponse;
 import com.google.genai.types.Part;
 
-import al_libs.logging.OllamaLoggingControl;
-import al_libs.s_eliza.BasicElizaClient;
-import al_libs.s_eliza.ElizaClient;
+import ai_libs.logging.LogProcessor;
+import ai_libs.logging.OllamaLoggingControl;
+import ai_libs.s_eliza.BasicElizaClient;
+import ai_libs.s_eliza.ElizaClient;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -51,7 +52,7 @@ public class AllClientsDemo {
 	private static final int TIMEOUT_SECONDS = 60;
 
 	public static void main(String[] args) {
-		OllamaLoggingControl.configureProviderLogging();
+		LogProcessor.processLogging();
 
 		String prompt = args.length == 0
 				? DEFAULT_PROMPT

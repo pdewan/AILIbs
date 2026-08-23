@@ -1,4 +1,4 @@
-package al_libs.logging;
+package ai_libs.logging;
 
 import java.io.File;
 import java.io.IOException;
@@ -10,6 +10,16 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+import ai_libs.logging.AILogSenderFactory;
+import ai_libs.logging.AILogSenderKind;
+import ai_libs.logging.ASourceAndTestLogWriter;
+import ai_libs.logging.LogEntryKind;
+import ai_libs.logging.LogNameManager;
+import ai_libs.logging.LogSenderFactory;
+import ai_libs.logging.LogSenderKind;
+import ai_libs.logging.OllamaLoggingControl;
+import ai_libs.logging.SendingData;
+import ai_libs.logging.SourceLogKind;
 import net.datafaker.Faker;
 
 public final class LogProcessor {

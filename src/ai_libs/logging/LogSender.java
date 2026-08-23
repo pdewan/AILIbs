@@ -1,6 +1,9 @@
-package al_libs.logging;
+package ai_libs.logging;
 
 import java.util.concurrent.CompletableFuture;
+
+import ai_libs.logging.LogEntryKind;
+import ai_libs.logging.SendingData;
 
 public interface LogSender {
 	CompletableFuture<Void> send(SendingData aSendingData);
