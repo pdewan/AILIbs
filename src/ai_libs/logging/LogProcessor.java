@@ -221,7 +221,7 @@ public final class LogProcessor {
 		File aProjectDirectory = args.length == 0
 				? new File(".")
 				: new File(args[0]);
-//		setAILogSenderKind(AILogSenderKind.PRINTER);
+		setAILogSenderKind(AILogSenderKind.PRINTER);
 		
 		processLogging(aProjectDirectory);
 		lastSendFuture.join();
