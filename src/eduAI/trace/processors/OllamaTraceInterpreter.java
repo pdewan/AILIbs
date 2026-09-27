@@ -12,7 +12,7 @@ public class OllamaTraceInterpreter
 					Pattern.DOTALL);
 	private static final Pattern RESPONSE_MESSAGE_PATTERN = Pattern.compile(
 			"\\\\?\"role\\\\?\"\\s*:\\s*\\\\?\"assistant\\\\?\".*?"
-					+ "\\\\?\"content\\\\?\"\\s*:\\s*\\\\?\"(.*?)\\\\?\"\\s*,",
+					+ "\"content\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"\\s*[,}]",
 			Pattern.DOTALL);
 	private static final Pattern TOTAL_DURATION_PATTERN = Pattern.compile(
 			"totalDuration=(\\d+)");
@@ -67,13 +67,45 @@ public class OllamaTraceInterpreter
 				RESPONSE_MESSAGE_PATTERN.matcher(aResponseDump);
 		String responseText = null;
 		while (matcher.find()) {
-			responseText = unescapeTraceString(matcher.group(1));
+			responseText = decodeJsonString(matcher.group(1));
 		}
 		return responseText == null
 				? List.of()
 				: List.of(message(
 						"ASSISTANT",
 						List.of(textPart(responseText))));
+	}
+
+	private String decodeJsonString(String aText) {
+		StringBuilder result = new StringBuilder();
+		for (int i = 0; i < aText.length(); i++) {
+			char character = aText.charAt(i);
+			if (character != '\\') {
+				result.append(character);
+				continue;
+			}
+			if (++i >= aText.length()) {
+				throw new IllegalArgumentException("Incomplete JSON escape");
+			}
+			char escaped = aText.charAt(i);
+			switch (escaped) {
+			case '"', '\\', '/' -> result.append(escaped);
+			case 'n' -> result.append('\n');
+			case 'r' -> result.append('\r');
+			case 't' -> result.append('\t');
+			case 'b' -> result.append('\b');
+			case 'f' -> result.append('\f');
+			case 'u' -> {
+				if (i + 4 >= aText.length()) {
+					throw new IllegalArgumentException("Incomplete JSON Unicode escape");
+				}
+				result.append((char) Integer.parseInt(aText.substring(i + 1, i + 5), 16));
+				i += 4;
+			}
+			default -> throw new IllegalArgumentException("Invalid JSON escape: " + escaped);
+			}
+		}
+		return result.toString();
 	}
 
 	private final NativeMetadataRegistry metadata = new NativeMetadataRegistry();

@@ -23,7 +23,7 @@ public class GeminiTraceInterpreter
 	}
 	private static final Pattern CONTENT_PATTERN =
 			Pattern.compile(
-					"com\\.google\\.genai\\.types\\.Content\\(role=\\\\?\"?([^\",)]*)\\\\?\"?, parts=\\[(.*?)\\]\\)",
+					"com\\.google\\.genai\\.types\\.Content\\(role=\\\\?\"?([^\",)]*)\\\\?\"?, parts=\\[((?:\"(?:\\\\.|[^\"\\\\])*\"|[^\"\\]])*)\\]\\)",
 					Pattern.DOTALL);
 	private static final Pattern TEXT_PATTERN =
 			Pattern.compile(
@@ -36,10 +36,10 @@ public class GeminiTraceInterpreter
 							+ "suffix=([0-9a-f]*)\\)\\)");
 	private static final Pattern SYSTEM_INSTRUCTION_PATTERN =
 			Pattern.compile(
-					"systemInstruction=Optional\\[Content\\{.*?text=Optional\\[((?:\\\\.|[^\\]])*)\\]",
+					"systemInstruction=Optional\\[Content\\{.*?text=Optional\\[(.*?)\\](?=\\s*(?:,\\s*thought=|\\}|$))",
 					Pattern.DOTALL);
 	private static final Pattern RESPONSE_TEXT_PATTERN = Pattern.compile(
-			"text=Optional\\[((?:\\\\.|[^\\]])*)\\]",
+			"text=Optional\\[(.*?)\\](?=\\s*(?:,\\s*thought=|\\}|$))",
 			Pattern.DOTALL);
 
 	@Override

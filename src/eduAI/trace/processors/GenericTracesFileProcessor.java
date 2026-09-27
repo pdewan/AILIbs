@@ -1267,9 +1267,6 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		handlers.put("message_translated", this::handleMessageTranslated);
 		handlers.put("response_translated", this::handleResponseTranslated);
 		handlers.put(
-				"metadata_property_store_created",
-				this::handleMetadataPropertyStoreCreated);
-		handlers.put(
 				"parameter_translated",
 				this::handleParameterTranslated);
 		handlers.put(
@@ -1282,9 +1279,6 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			handlers.put(
 					"message_merger_factory_fetched",
 					this::handleStreamChunkMergerFactoryFetched);
-			handlers.put(
-					"streaming_chunk_sent_to_merger",
-					this::handleStreamingChunkSentToMerger);
 			handlers.put(
 					"streaming_chunk_accumulated",
 					this::handleStreamingChunkAccumulated);
@@ -1456,16 +1450,6 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		tagClassesInsideTrace(aTraceRecord);
 	}
 
-	private void handleMetadataPropertyStoreCreated(
-			TraceRecord aTraceRecord) {
-		attachAuxiliaryExtractedData(aTraceRecord);
-		addSourceClassTag(
-				aTraceRecord,
-				currentProvider + "ResponseMetadataAdapter",
-				"provider response metadata was translated to a metadata property store");
-		tagClassesInsideTrace(aTraceRecord);
-	}
-
 	private void addSourceClassTag(
 			TraceRecord aTraceRecord,
 			String aTag,
@@ -1628,15 +1612,6 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 					"streamChunkMergerFactoryClass",
 					"stream chunk merger factory was fetched");
 		}
-		tagClassesInsideTrace(aTraceRecord);
-	}
-
-	private void handleStreamingChunkSentToMerger(
-			TraceRecord aTraceRecord) {
-		attachAuxiliaryExtractedData(aTraceRecord);
-		aTraceRecord.putExtractedData(
-				"streamingChunkMessageStructure",
-				firstCanonicalMessageFromArgument(aTraceRecord, "streamingChunk"));
 		tagClassesInsideTrace(aTraceRecord);
 	}
 
@@ -3351,7 +3326,10 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				TraceMessage chunk =
 						(TraceMessage) record.getExtractedData()
 								.get("streamingChunkMessageStructure");
-				if (!isAssistantTextMessage(chunk)) {
+				// Whitespace-only chunks are part of the answer too.
+				if (chunk == null
+						|| !"ASSISTANT".equals(standardRole(chunk.role()))
+						|| textOf(chunk).isEmpty()) {
 					continue;
 				}
 				if (firstChunkRecord == null) {
