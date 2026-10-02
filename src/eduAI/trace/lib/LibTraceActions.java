@@ -8,13 +8,18 @@ import java.util.Objects;
 import eduAI.trace.TraceObjectPrinter;
 
 public class LibTraceActions {
+	/**
+	 * Trace the registry lookup using its actual provider key. The assignment
+	 * providers are {@code gemini} and {@code ollama}; their capitalization is
+	 * ignored by the checks. New records write the key in lowercase.
+	 */
 	public static void traceServerHandleFactoryFetched(
 			Class<?> aSourceClass,
 			String aProviderName,
 			Object aServerHandleFactoryRegistry,
 			Object aServerHandleFactory) {
 		Map<String, String> data = new LinkedHashMap<>();
-		data.put("provider", aProviderName);
+		data.put("provider", aProviderName.trim().toLowerCase(java.util.Locale.ROOT));
 		data.put(
 				"serverHandleFactoryRegistryClass",
 				TraceObjectPrinter.className(aServerHandleFactoryRegistry));
@@ -407,41 +412,38 @@ public class LibTraceActions {
 						aMessageMerger));
 	}
 
-	public static void traceStreamingChunkAccumulated(
+	public static synchronized void traceStreamingChunkAccumulated(
 			Class<?> aSourceClass,
 			Object aMessageMerger,
 			Object aChunkMessage,
 			Object anAccumulatedMessage) {
+		Map<String, String> evidence = data(
+				"messageMergerClass", aMessageMerger,
+				"streamingChunk", aChunkMessage,
+				"accumulatedMessage", anAccumulatedMessage,
+				"messageMerger", aMessageMerger);
+		StreamingTextEvidence.accumulate(aMessageMerger, aChunkMessage, anAccumulatedMessage, evidence);
 		LibTrace.traceDesignPattern(
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
 				aSourceClass,
 				LibTraceEvent.STREAMING_CHUNK_ACCUMULATED,
-				data(
-						"messageMergerClass",
-						aMessageMerger,
-						"streamingChunk",
-						aChunkMessage,
-						"accumulatedMessage",
-						anAccumulatedMessage,
-						"messageMerger",
-						aMessageMerger));
+				evidence);
 	}
 
-	public static void traceStreamingChunksMerged(
+	public static synchronized void traceStreamingChunksMerged(
 			Class<?> aSourceClass,
 			Object aMessageMerger,
 			Object aMergedMessage) {
+		Map<String, String> evidence = data(
+				"messageMergerClass", aMessageMerger,
+				"mergedMessage", aMergedMessage,
+				"messageMerger", aMessageMerger);
+		StreamingTextEvidence.finish(aMessageMerger, aMergedMessage, evidence);
 		LibTrace.traceDesignPattern(
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
 				aSourceClass,
 				LibTraceEvent.STREAMING_CHUNKS_MERGED,
-				data(
-						"messageMergerClass",
-						aMessageMerger,
-						"mergedMessage",
-						aMergedMessage,
-						"messageMerger",
-						aMessageMerger));
+				evidence);
 	}
 
 	public static void traceStreamingCallbackInvoked(
@@ -868,7 +870,8 @@ public class LibTraceActions {
 				+ " interfaces="
 				+ TraceObjectPrinter.interfaceNames(aValue)
 				+ " providerValue="
-				+ aFormattedValue;
+				+ eduAI.trace.CompactNativeText.format(aFormattedValue,
+						TraceObjectPrinter.className(aValue).contains("GenerateContentConfig"));
 	}
 
 	private static boolean isSimpleValue(Object aValue) {

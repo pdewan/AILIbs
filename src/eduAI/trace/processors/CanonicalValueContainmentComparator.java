@@ -74,6 +74,22 @@ public class CanonicalValueContainmentComparator
 			return List.of();
 		}
 		ArrayList<Integer> matchedOffsets = new ArrayList<>();
+		var compactExpected = eduAI.trace.TraceTextSummary.fromToken(anExpectedValue.value());
+		if (compactExpected != null && compactExpected.sha256().isEmpty()) {
+			// Native system instructions may combine multiple generic system parts.
+			// Their edge/length summaries compose; hashes of ordinary text do not.
+			List<String> pieces = new ArrayList<>();
+			for (ValueOccurrence available : someAvailableValues) {
+				var summary = eduAI.trace.TraceTextSummary.fromToken(available.value());
+				if (available.kind() != ValueKind.STRING || someUsedOffsets.contains(available.offset())
+						|| summary == null || !summary.sha256().isEmpty()) continue;
+				pieces.add(available.value());
+				matchedOffsets.add(available.offset());
+				String combined = eduAI.trace.TraceTextSummary.concatenateEdges(pieces);
+				if (eduAI.trace.TraceTextSummary.matches(combined, anExpectedValue.value())) return List.copyOf(matchedOffsets);
+			}
+			return List.of();
+		}
 		int expectedOffset = 0;
 		for (ValueOccurrence available : someAvailableValues) {
 			if (available.kind() != ValueKind.STRING

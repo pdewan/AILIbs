@@ -2,6 +2,8 @@ package eduAI.trace.processors;
 
 public interface BridgeDemoTraceInputs {
 	String IMAGE_FILE_NAME = "bridge_scene.jpg";
+	String SUMMARY_PROMPT = "Summarize our conversation and remember that summary as the new context for future questions.";
+	String LEGACY_SUMMARY_PROMPT = "Summarize our conversation and remember that summary as the new context for future questions as the summarized history will be cleared for future prompts. In other words, all summarized messages in this conversation will be ereased to save on tokens, but you should use the summary as the new context for future questions. ";
 	String SYSTEM_PROMPT_1 =
 			"You are movie expert and can recognize movie scenes from images. "
 					+ "You will be provided with an image and a prompt. "

@@ -38,7 +38,8 @@ public final class OllamaNativeMessageFormatter {
 				+ ", thinking="
 				+ quoted(aMessage.getThinking())
 				+ ", response="
-				+ quoted(aMessage.getResponse())
+				+ quoted(aMessage.getResponse() == null ? null : eduAI.trace.TraceTextSummary.compact(
+						aMessage.getResponse(), "system".equalsIgnoreCase(String.valueOf(aMessage.getRole()))))
 				+ ", images="
 				+ imageCount(aMessage)
 				+ ", imageBytes="

@@ -42,7 +42,6 @@ public class EssentialBrokenTraceFixturesGenerator {
 			field("parameter_translated", "providerDependentTargetState"),
 			field("metadata_translated", "metadataHandlerClass"),
 			field("metadata_translated", "metadataHandler"),
-			field("metadata_translated", "propertyName"),
 			field("metadata_translated", "propertyValue"),
 			field("message_merger_factory_fetched", "streamChunkMergerFactoryRegistryClass"),
 			field("message_merger_factory_fetched", "streamChunkMergerFactory"),

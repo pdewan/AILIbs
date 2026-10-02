@@ -390,7 +390,8 @@ public class CoreGenericTraceTest {
 	public void testTraceObjectPrinterPreservesLongStrings() {
 		String value = "0123456789".repeat(40);
 		String formatted = TraceObjectPrinter.format("longText", value);
-		assertContains("value=\"" + value + "\"", formatted);
+		assertContains("value=\"" + eduAI.trace.TraceTextSummary.from(value).token() + "\"", formatted);
+		assertContains("value=\"" + value + "\"", TraceObjectPrinter.formatFullEvidence("longText", value));
 	}
 
 	private Path createTempTraceFile() {

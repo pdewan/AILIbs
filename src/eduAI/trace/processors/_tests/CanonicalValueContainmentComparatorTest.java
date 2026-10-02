@@ -46,6 +46,21 @@ public class CanonicalValueContainmentComparatorTest {
 						+ combined.detail());
 
 		System.out.println("Canonical value containment comparator checks passed");
+		String first = "First system instruction with a long middle and ending.";
+		String second = "Second instruction with a different middle and ending.";
+		String firstToken = eduAI.trace.TraceTextSummary.fromEdges(first).token();
+		String secondToken = eduAI.trace.TraceTextSummary.fromEdges(second).token();
+		String dump = "window: arbitrary.Window fields={one: java.lang.String value=\"" + firstToken
+				+ "\", two: java.lang.String value=\"" + secondToken + "\"}";
+		var compact = List.of(occurrence(CanonicalValueKind.DATA,
+				eduAI.trace.TraceTextSummary.fromEdges(first + second).token(), "system.value"));
+		require(comparator.compare(dump, compact, value -> false).matches(), "Combined system summaries rejected");
+		require(!comparator.compare(dump.replace(secondToken, firstToken), compact, value -> false).matches(), "Duplicated system prompt accepted");
+		require(!comparator.compare(dump.replace(firstToken, secondToken), compact, value -> false).matches(), "Changed system prefix accepted");
+		require(!comparator.compare(dump.replace(secondToken, ""), compact, value -> false).matches(), "Missing system prompt accepted");
+		var reversed = List.of(occurrence(CanonicalValueKind.DATA,
+				eduAI.trace.TraceTextSummary.fromEdges(second + first).token(), "system.value"));
+		require(!comparator.compare(dump, reversed, value -> false).matches(), "Reordered system prompts accepted");
 	}
 
 	private static CanonicalValueOccurrence occurrence(

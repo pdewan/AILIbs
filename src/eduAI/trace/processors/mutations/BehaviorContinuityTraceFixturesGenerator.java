@@ -24,7 +24,7 @@ public class BehaviorContinuityTraceFixturesGenerator {
 				aTarget.resolve("missing_previous_system_prompt"),
 				GEMINI_NON_STREAMING_FILE,
 				2,
-				line -> line.replace(
+				line -> replaceTextEvidence(line,
 						"You are movie expert",
 						"Incorrect retained system prompt"));
 		generateFixture(
@@ -32,7 +32,7 @@ public class BehaviorContinuityTraceFixturesGenerator {
 				aTarget.resolve("missing_previous_user_prompt"),
 				GEMINI_NON_STREAMING_FILE,
 				3,
-				line -> line.replace(
+				line -> replaceTextEvidence(line,
 						"Galahad?",
 						"Incorrect retained user prompt"));
 		generateFixture(
@@ -46,7 +46,7 @@ public class BehaviorContinuityTraceFixturesGenerator {
 				aTarget.resolve("ollama_missing_previous_system_prompt"),
 				OLLAMA_NON_STREAMING_FILE,
 				2,
-				line -> line.replace(
+				line -> replaceTextEvidence(line,
 						"You are movie expert",
 						"Incorrect retained system prompt"));
 		generateFixture(
@@ -54,7 +54,7 @@ public class BehaviorContinuityTraceFixturesGenerator {
 				aTarget.resolve("ollama_missing_previous_user_prompt"),
 				OLLAMA_NON_STREAMING_FILE,
 				3,
-				line -> line.replace(
+				line -> replaceTextEvidence(line,
 						"Galahad?",
 						"Incorrect retained user prompt"));
 		generateFixture(
@@ -185,7 +185,7 @@ public class BehaviorContinuityTraceFixturesGenerator {
 					continue;
 				}
 				String original = lines.get(index);
-				String replacement = original.replace(
+				String replacement = replaceTextEvidence(original,
 						aTargetText,
 						aReplacementText);
 				if (!original.equals(replacement)) {
@@ -202,6 +202,27 @@ public class BehaviorContinuityTraceFixturesGenerator {
 					lines,
 					StandardCharsets.UTF_8);
 		}
+	}
+
+	/** Corrupt the same prompt whether its evidence is full text or a compact token. */
+	private static String replaceTextEvidence(String line, String target, String replacement) {
+		String changed = line.replace(target, replacement);
+		var matcher = java.util.regex.Pattern.compile("@text:[0-9]+:[A-Za-z0-9_-]*:[A-Za-z0-9_-]*:[0-9a-f]*").matcher(changed);
+		StringBuilder result = new StringBuilder();
+		while (matcher.find()) {
+			var summary = eduAI.trace.TraceTextSummary.fromToken(matcher.group());
+			if (summary == null) continue;
+			String prefix = summary.prefix().stripLeading();
+			boolean matches = summary.prefix().contains(target) || summary.suffix().contains(target)
+					|| (!prefix.isEmpty() && target.startsWith(prefix));
+			if (matches) {
+				var corrupted = new eduAI.trace.TraceTextSummary(summary.length() + 1,
+						"Incorrect!", summary.suffix(), summary.sha256());
+				matcher.appendReplacement(result, java.util.regex.Matcher.quoteReplacement(corrupted.token()));
+			}
+		}
+		matcher.appendTail(result);
+		return result.toString();
 	}
 
 	private int requestLineIndex(List<String> someLines, int anOccurrence) {

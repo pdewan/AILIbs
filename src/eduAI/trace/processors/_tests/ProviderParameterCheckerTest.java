@@ -28,7 +28,8 @@ public class ProviderParameterCheckerTest {
 		Path trace = Files.createTempFile("parameter-check", ".txt");
 		Files.writeString(
 				trace,
-				"## lib {parameter_translated} [none: main] "
+				"## lib {server_handle_factory_fetched} [none: main] (single_model_request_processing: sample.Factory) <provider=\"Provider\" serverHandleFactoryClass=\"sample.Factory\" serverHandleFactoryRegistryClass=\"sample.Registry\"> ##\n"
+						+ "## lib {parameter_translated} [none: main] "
 						+ "(single_model_request_processing: sample.ParameterProcessor) "
 						+ "<parameterHandlerClass=\"sample.TimeoutAdapter\" "
 						+ "providerDependentTarget=\""

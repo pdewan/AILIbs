@@ -49,19 +49,22 @@ public final class GeminiNativeMessageFormatter {
 			}
 			builder.append(i)
 					.append(":")
-					.append(formatPart(parts.get(i)));
+					.append(formatPart(parts.get(i), "system".equalsIgnoreCase(value(aContent.role()))));
 		}
 		builder.append("])");
 		return builder.toString();
 	}
 
 	public static String formatPart(Part aPart) {
+		return formatPart(aPart, false);
+	}
+	private static String formatPart(Part aPart, boolean system) {
 		if (aPart == null) {
 			return "null";
 		}
 		if (aPart.text().isPresent()) {
 			return "text("
-					+ quoted(aPart.text().get())
+					+ quoted(eduAI.trace.TraceTextSummary.compact(aPart.text().get(), system))
 					+ ", thought="
 					+ aPart.thought().orElse(false)
 					+ ")";

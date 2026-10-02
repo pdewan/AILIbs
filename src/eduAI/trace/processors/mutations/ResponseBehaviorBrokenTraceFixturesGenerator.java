@@ -31,7 +31,8 @@ public class ResponseBehaviorBrokenTraceFixturesGenerator {
 							responseField)
 							.inFile(fileName)
 							.atOccurrence(1)));
-			for (String fieldName : List.of("propertyName", "propertyValue")) {
+			// Renaming a generic metadata property is valid; corrupt its value instead.
+			for (String fieldName : List.of("propertyValue")) {
 				result.add(create(
 						mutator,
 						aSource,

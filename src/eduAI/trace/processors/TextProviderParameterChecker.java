@@ -34,6 +34,7 @@ public class TextProviderParameterChecker
 	public boolean isExpectedTarget(ParameterEvidence anEvidence) {
 		String searchable = String.valueOf(
 				anEvidence.providerDependentTarget());
+		if (isOllamaOptionsMap(searchable)) return true;
 		for (String marker : targetMarkers) {
 			if (searchable.contains(marker)) {
 				return true;
@@ -46,11 +47,20 @@ public class TextProviderParameterChecker
 	public boolean isAssigned(ParameterEvidence anEvidence) {
 		String searchable = String.valueOf(
 				anEvidence.providerDependentTargetState());
+		if (isOllamaOptionsMap(anEvidence.providerDependentTarget())) {
+			return new FlattenedKeyValueComparator().compare(searchable,
+					java.util.Map.of(parameterName, anEvidence.propertyValue())).matches();
+		}
 		for (String marker : assignmentMarkers) {
 			if (searchable.contains(marker)) {
 				return true;
 			}
 		}
 		return false;
+	}
+	private boolean isOllamaOptionsMap(String dump) {
+		if (!"Ollama".equalsIgnoreCase(providerName) || !"temperature".equalsIgnoreCase(parameterName) || dump == null) return false;
+		int entries = dump.indexOf(" entries={"), fields = dump.indexOf(" fields={");
+		return entries >= 0 && (fields < 0 || entries < fields);
 	}
 }

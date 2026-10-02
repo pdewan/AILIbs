@@ -12,8 +12,16 @@ import java.util.List;
 import java.util.Map;
 
 public final class TraceObjectPrinter {
-	private static final int DEFAULT_MAX_DEPTH = 4;
-	private static final int MAX_ELEMENTS = 8;
+	private static final ThreadLocal<Boolean> COMPACT = ThreadLocal.withInitial(() -> true);
+	private static final ThreadLocal<Boolean> SYSTEM_TEXT = ThreadLocal.withInitial(() -> false);
+
+	/** Temporary in-memory evidence for trace calculations; never written to the trace. */
+	public static String formatFullEvidence(String name, Object value) {
+		boolean previous = COMPACT.get();
+		COMPACT.set(false);
+		try { return format(name, value); }
+		finally { COMPACT.set(previous); }
+	}
 	private static final List<String> EXTERNAL_CLASS_NAMES =
 			new ArrayList<>();
 	private static final List<String> EXTERNAL_PACKAGE_PREFIXES =
@@ -42,18 +50,20 @@ public final class TraceObjectPrinter {
 	}
 
 	public static String format(String aVariableName, Object anObject) {
-		return format(aVariableName, anObject, DEFAULT_MAX_DEPTH);
+		return format(variableName(aVariableName), anObject, new IdentityHashMap<>());
 	}
 
+	/**
+	 * Compatibility overload. Traversal now visits all elements and fields;
+	 * reference cycles, rather than a depth cutoff, stop recursive expansion.
+	 * @deprecated The depth argument is ignored. Use the two-argument overload.
+	 */
+	@Deprecated
 	public static String format(
 			String aVariableName,
 			Object anObject,
 			int aMaxDepth) {
-		return format(
-				variableName(aVariableName),
-				anObject,
-				Math.max(0, aMaxDepth),
-				new IdentityHashMap<>());
+		return format(aVariableName, anObject);
 	}
 
 	public static String format(Object anObject) {
@@ -159,8 +169,28 @@ public final class TraceObjectPrinter {
 	private static String format(
 			String aVariableName,
 			Object anObject,
-			int aRemainingDepth,
 			IdentityHashMap<Object, Boolean> aVisited) {
+		boolean previous = SYSTEM_TEXT.get();
+		String role = roleOf(anObject);
+		if (!role.isEmpty()) SYSTEM_TEXT.set(role.equalsIgnoreCase("SYSTEM"));
+		try { return formatObject(aVariableName, anObject, aVisited, role); }
+		finally { SYSTEM_TEXT.set(previous); }
+	}
+
+	private static String roleOf(Object object) {
+		if (object == null || isSimpleValue(object.getClass()) || object.getClass().isArray()
+				|| object instanceof Iterable<?> || object instanceof Map<?, ?>) return "";
+		for (Field f : instanceFields(object.getClass())) {
+			if (!f.getName().equals("role")) continue;
+			Object value = fieldValue(f, object);
+			if (value instanceof java.util.Optional<?> optional) value = optional.orElse(null);
+			if (value instanceof String || value instanceof Enum<?>) return value.toString();
+		}
+		return "";
+	}
+
+	private static String formatObject(String aVariableName, Object anObject,
+			IdentityHashMap<Object, Boolean> aVisited, String role) {
 		if (anObject == null) {
 			return aVariableName + ": null";
 		}
@@ -172,6 +202,11 @@ public final class TraceObjectPrinter {
 			return header + " value=" + simpleValue(anObject);
 		}
 		header += " interfaces=" + interfaceNames(anObject);
+		// Path is a scalar runtime value. Its iterator creates new Path objects for
+		// each component, so identity-based cycle detection cannot stop recursion.
+		if (anObject instanceof java.nio.file.Path) {
+			return header + " toString=" + safeToString(anObject) + " value=<opaque>";
+		}
 		if (objectClass == byte[].class) {
 			return header + " value="
 					+ ImageByteSummary.from((byte[]) anObject).formatted();
@@ -179,10 +214,21 @@ public final class TraceObjectPrinter {
 		if (aVisited.containsKey(anObject)) {
 			return header + " value=<cycle>";
 		}
-		if (aRemainingDepth <= 0) {
-			return header + " value=<max-depth>";
+		if (COMPACT.get() && !role.isEmpty() && !usesExternalToString(objectClass)) {
+			String text = TraceMessageText.fromFullDump(formatFullEvidence(aVariableName, anObject));
+			if (text != null) {
+				TraceTextSummary summary = SYSTEM_TEXT.get()
+						? TraceTextSummary.fromEdges(text) : TraceTextSummary.from(text);
+				header += " textAggregate=\"" + summary.token() + "\"";
+			}
 		}
-		String toStringText = " toString=" + safeToString(anObject);
+		// Containers are traversed completely below. Their toString is redundant
+		// and may duplicate an entire nested graph; never use its summary as evidence.
+		boolean container = objectClass.isArray()
+				|| anObject instanceof Map<?, ?> || anObject instanceof Iterable<?>;
+		String toStringText = container
+				? " toStringSummary=" + safeDescriptionSummary(anObject)
+				: " toString=" + safeToString(anObject);
 		TraceObjectFormatter formatter = externalFormatter(objectClass);
 		if (formatter != null) {
 			return header
@@ -199,13 +245,13 @@ public final class TraceObjectPrinter {
 				return header
 						+ toStringText
 						+ " elements="
-						+ formatArray(anObject, aRemainingDepth, aVisited);
+						+ formatArray(anObject, aVisited);
 			}
 			if (anObject instanceof Map<?, ?> map) {
 				return header
 						+ toStringText
 						+ " entries="
-						+ formatMap(map, aRemainingDepth, aVisited);
+						+ formatMap(map, aVisited);
 			}
 			if (anObject instanceof Iterable<?> iterable) {
 				return header
@@ -213,7 +259,6 @@ public final class TraceObjectPrinter {
 						+ " elements="
 						+ formatIterable(
 								iterable,
-								aRemainingDepth,
 								aVisited);
 			}
 			if (isOpaqueRuntimeObject(objectClass)) {
@@ -222,7 +267,7 @@ public final class TraceObjectPrinter {
 			return header
 					+ toStringText
 					+ " fields="
-					+ formatFields(anObject, aRemainingDepth, aVisited);
+					+ formatFields(anObject, aVisited);
 		} finally {
 			aVisited.remove(anObject);
 		}
@@ -230,46 +275,34 @@ public final class TraceObjectPrinter {
 
 	private static String formatArray(
 			Object anArray,
-			int aRemainingDepth,
 			IdentityHashMap<Object, Boolean> aVisited) {
 		int length = Array.getLength(anArray);
 		StringBuilder builder = new StringBuilder("[");
-		int count = Math.min(length, MAX_ELEMENTS);
-		for (int index = 0; index < count; index++) {
+		for (int index = 0; index < length; index++) {
 			appendSeparator(builder, index);
 			builder.append(
 					format(
 							"[" + index + "]",
 							Array.get(anArray, index),
-							aRemainingDepth - 1,
 							aVisited));
 		}
-		appendOmitted(builder, count, length);
 		builder.append("]");
 		return builder.toString();
 	}
 
 	private static String formatIterable(
 			Iterable<?> anIterable,
-			int aRemainingDepth,
 			IdentityHashMap<Object, Boolean> aVisited) {
 		StringBuilder builder = new StringBuilder("[");
 		int index = 0;
 		for (Object element : anIterable) {
-			if (index >= MAX_ELEMENTS) {
-				break;
-			}
 			appendSeparator(builder, index);
 			builder.append(
 					format(
 							"[" + index + "]",
 							element,
-							aRemainingDepth - 1,
 							aVisited));
 			index++;
-		}
-		if (index >= MAX_ELEMENTS) {
-			builder.append(", ...");
 		}
 		builder.append("]");
 		return builder.toString();
@@ -277,38 +310,30 @@ public final class TraceObjectPrinter {
 
 	private static String formatMap(
 			Map<?, ?> aMap,
-			int aRemainingDepth,
 			IdentityHashMap<Object, Boolean> aVisited) {
 		StringBuilder builder = new StringBuilder("{");
 		int index = 0;
 		for (Map.Entry<?, ?> entry : aMap.entrySet()) {
-			if (index >= MAX_ELEMENTS) {
-				break;
-			}
 			appendSeparator(builder, index);
 			builder.append(
 					format(
 							"key",
 							entry.getKey(),
-							aRemainingDepth - 1,
 							aVisited));
 			builder.append(" -> ");
 			builder.append(
 					format(
 							"value",
 							entry.getValue(),
-							aRemainingDepth - 1,
 							aVisited));
 			index++;
 		}
-		appendOmitted(builder, index, aMap.size());
 		builder.append("}");
 		return builder.toString();
 	}
 
 	private static String formatFields(
 			Object anObject,
-			int aRemainingDepth,
 			IdentityHashMap<Object, Boolean> aVisited) {
 		List<Field> fields = instanceFields(anObject.getClass());
 		StringBuilder builder = new StringBuilder("{");
@@ -323,7 +348,6 @@ public final class TraceObjectPrinter {
 						format(
 								field.getName(),
 								fieldValue,
-								aRemainingDepth - 1,
 								aVisited));
 			}
 		}
@@ -406,7 +430,7 @@ public final class TraceObjectPrinter {
 
 	private static String simpleValue(Object anObject) {
 		if (anObject instanceof String text) {
-			return "\"" + escaped(text) + "\"";
+			return "\"" + escaped(COMPACT.get() ? TraceTextSummary.compact(text, SYSTEM_TEXT.get()) : text) + "\"";
 		}
 		if (anObject instanceof Character ch) {
 			return "'" + escaped(String.valueOf(ch)) + "'";
@@ -419,11 +443,28 @@ public final class TraceObjectPrinter {
 
 	private static String safeToString(Object anObject) {
 		try {
-			return "\"" + escaped(String.valueOf(anObject)) + "\"";
+			String value = String.valueOf(anObject);
+			if (COMPACT.get()) {
+				if (usesExternalToString(anObject.getClass()))
+					value = CompactNativeText.format(value, anObject.getClass().getName().contains("GenerateContentConfig"));
+				else if (!value.equals(anObject.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(anObject))))
+					value = TraceTextSummary.compact(value, SYSTEM_TEXT.get());
+			}
+			return "\"" + escaped(value) + "\"";
 		} catch (Throwable e) {
 			return "<toString-threw:"
 					+ className(e.getClass())
 					+ ">";
+		}
+	}
+
+	private static String safeDescriptionSummary(Object anObject) {
+		try {
+			String text = String.valueOf(anObject);
+			return (SYSTEM_TEXT.get() ? TraceTextSummary.fromEdges(text)
+					: TraceTextSummary.from(text)).formatted();
+		} catch (Throwable e) {
+			return "<toString-threw:" + className(e.getClass()) + ">";
 		}
 	}
 
@@ -452,19 +493,6 @@ public final class TraceObjectPrinter {
 			int anIndex) {
 		if (anIndex > 0) {
 			aBuilder.append(", ");
-		}
-	}
-
-	private static void appendOmitted(
-			StringBuilder aBuilder,
-			int aPrintedCount,
-			int aTotalCount) {
-		if (aTotalCount > aPrintedCount) {
-			if (aPrintedCount > 0) {
-				aBuilder.append(", ");
-			}
-			aBuilder.append("... ").append(aTotalCount - aPrintedCount)
-					.append(" more");
 		}
 	}
 

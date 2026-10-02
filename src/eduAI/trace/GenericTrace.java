@@ -18,6 +18,10 @@ public final class GenericTrace {
 	private static volatile boolean fileEnabled = false;
 	private static volatile Path traceFile;
 	private static volatile boolean traceFileNeedsFreshStart = false;
+	private static final java.util.concurrent.atomic.AtomicLong SESSION = new java.util.concurrent.atomic.AtomicLong();
+
+	/** Identifies a new output session, including reopening the same trace filename. */
+	public static long getSessionId() { return SESSION.get(); }
 
 	private GenericTrace() {
 	}
@@ -59,12 +63,14 @@ public final class GenericTrace {
 	}
 
 	public static void setTraceFile(Path aTraceFile) {
+		SESSION.incrementAndGet();
 		traceFile = aTraceFile;
 		fileEnabled = aTraceFile != null;
 		traceFileNeedsFreshStart = aTraceFile != null;
 	}
 
 	public static void clearTraceFile() {
+		SESSION.incrementAndGet();
 		traceFile = null;
 		fileEnabled = false;
 		traceFileNeedsFreshStart = false;

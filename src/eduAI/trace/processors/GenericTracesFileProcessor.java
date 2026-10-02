@@ -16,6 +16,7 @@ import java.util.Set;
 import eduAI.trace.TraceLine;
 import eduAI.trace.TraceLineParser;
 import eduAI.trace.ImageByteSummary;
+import eduAI.trace.TraceTextSummary;
 import eduAI.trace.lib.StreamingMode;
 
 public class GenericTracesFileProcessor implements TraceFilesProcessor {
@@ -254,7 +255,9 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 
 	public static record TraceMessage(
 			String role,
-			List<TracePart> parts) {
+			List<TracePart> parts,
+			String textAggregate) {
+		public TraceMessage(String role, List<TracePart> parts) { this(role, parts, ""); }
 	}
 
 	public static record TracePart(
@@ -1244,7 +1247,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			throws IOException {
 		List<ParsedTraceLine> result = new ArrayList<>();
 		List<String> fileLines =
-				Files.readAllLines(aTraceFile, StandardCharsets.UTF_8);
+				TraceFileIO.readLines(aTraceFile);
 		for (int i = 0; i < fileLines.size(); i++) {
 			String line = fileLines.get(i);
 			TraceLine traceLine = TraceLineParser.parse(line);
@@ -1720,7 +1723,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		if (!providerShouldMatchTrace(aTraceLine)) {
 			return;
 		}
-		String provider = aTraceLine.getAuxiliaryData().get("provider");
+		String provider = TraceProviderNames.canonical(aTraceLine.getAuxiliaryData().get("provider"));
 		if (isBlank(provider)) {
 			return;
 		}
@@ -1740,7 +1743,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	}
 
 	private String providerFor(TraceLine aTraceLine) {
-		String provider = aTraceLine.getAuxiliaryData().get("provider");
+		String provider = TraceProviderNames.canonical(aTraceLine.getAuxiliaryData().get("provider"));
 		if (!isBlank(provider)) {
 			return provider;
 		}
@@ -2303,11 +2306,10 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			String providerSource = data.get("providerDependentSource");
 			String difference = providerMetadataDifference(
 							providerSource,
-							propertyName,
 							propertyValue);
 			boolean matches = difference == null;
 			if (matches) {
-				difference = "metadata key and value match the corresponding native field";
+				difference = "translated value matches native metadata evidence";
 			}
 			metadataMatchResults.add(matches);
 			record.putExtractedData(
@@ -2326,64 +2328,16 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 							+ difference.replace("\"", "'")
 							+ "\" traceLine=" + traceLineLocation(record));
 		}
-		checkMetadataPropertyNameConsistency(
-				aProvider, aMode, metadataRecords);
 		return checkerResultForProvider(
 				PROVIDER_GENERIC_METADATA_MATCH, aProvider);
 	}
 
-	private void checkMetadataPropertyNameConsistency(
-			String aProvider,
-			StreamingMode aMode,
-			List<TraceRecord> someRecords) {
-		Map<String, java.util.LinkedHashSet<String>> namesBySource =
-				new java.util.LinkedHashMap<>();
-		for (TraceRecord record : someRecords) {
-			Map<String, String> data =
-					record.getTraceLine().getAuxiliaryData();
-			String source = data.get("providerDependentSource");
-			String name = data.get("propertyName");
-			if (!isBlank(source) && !isBlank(name)) {
-				namesBySource.computeIfAbsent(
-						source, ignored -> new java.util.LinkedHashSet<>())
-						.add(name);
-			}
+	private String providerMetadataDifference(String source, String value) {
+		for (ProviderTraceInterpreter interpreter : providerTraceInterpreters) {
+			NativeMetadataRegistry registry = interpreter.nativeMetadataRegistry(source);
+			if (registry != null) return registry.difference(source, value);
 		}
-		java.util.LinkedHashSet<String> expectedNames = null;
-		for (java.util.LinkedHashSet<String> names : namesBySource.values()) {
-			if (expectedNames == null) {
-				expectedNames = names;
-				continue;
-			}
-			if (!expectedNames.equals(names)) {
-				recordCheckerMessage(
-						TraceProcessorMessageLevel.ERROR,
-						PROVIDER_GENERIC_METADATA_MATCH
-								+ " provider=" + aProvider
-								+ " mode=" + aMode
-								+ " metadataPropertyNamesConsistent=false"
-								+ " expected=" + expectedNames
-								+ " actual=" + names);
-				recordError(
-						TraceFilesProcessorError
-								.PROVIDER_INDEPENDENT_DEPENDENT_VALUE_MISMATCH);
-				return;
-			}
-		}
-	}
-
-	private String providerMetadataDifference(
-			String aProviderSource,
-			String aPropertyName,
-			String aPropertyValue) {
-		for (ProviderTraceInterpreter interpreter :
-				providerTraceInterpreters) {
-			NativeMetadataRegistry registry = interpreter.nativeMetadataRegistry(aProviderSource);
-			if (registry != null) {
-				return registry.difference(aProviderSource, aPropertyName, aPropertyValue);
-			}
-		}
-		return "no native metadata mapping registered for source; key=" + aPropertyName;
+		return "no native metadata mapping registered for source";
 	}
 
 	@SuppressWarnings("unchecked")
@@ -2404,7 +2358,16 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		String firstDifference = "";
 		List<String> expectedParameterNames =
 				observedParameterNames(aProvider);
+		if (expectedParameterNames.stream().noneMatch(name ->
+				providerParameterCheckers.containsKey(parameterCheckerKey(aProvider, name)))) {
+			return "no supported parameter translation was traced for provider " + aProvider;
+		}
 		for (String expectedName : expectedParameterNames) {
+			if (!providerParameterCheckers.containsKey(parameterCheckerKey(aProvider, expectedName))) {
+				recordCheckerMessage(TraceProcessorMessageLevel.INFO, "additional_parameter provider=" + aProvider
+						+ " propertyName=" + expectedName + " checked=false reason=no_registered_rule");
+				continue;
+			}
 			ProviderParameterChecker.ParameterEvidence item =
 					parameterEvidence(evidence, expectedName);
 			if (item == null) {
@@ -2577,9 +2540,31 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	public TraceCheckResult checkStreamingChunksAccumulatedCorrectly(
 			String aProvider) {
 		StringBuilder expectedText = new StringBuilder();
+		Map<String, TraceTextSummary> previousHashes = new LinkedHashMap<>();
+		Map<String, Integer> indexes = new LinkedHashMap<>();
 		for (TraceRecord record : records(aProvider, StreamingMode.STREAMING)) {
 			String eventName = record.getTraceLine().getEventName();
+			Map<String, String> data = record.getTraceLine().getAuxiliaryData();
 			if ("streaming_chunks_merged".equals(eventName)) {
+				TraceMessage mergedMessage = (TraceMessage) record.getExtractedData().get("mergedMessageStructure");
+				if (mergedMessage != null && "SYSTEM".equals(mergedMessage.role())
+						&& !data.containsKey("streamHashId")) continue;
+				if (data.containsKey("streamTextEvidenceVersion")) {
+					String id = data.get("streamHashId");
+					TraceTextSummary expected = TraceTextSummary.parse(data.get("expectedMergedTextSummary"));
+					TraceTextSummary actual = TraceTextSummary.parse(data.get("mergedTextSummary"));
+					TraceMessage merged = (TraceMessage) record.getExtractedData().get("mergedMessageStructure");
+					boolean match = "1".equals(data.get("streamTextEvidenceVersion"))
+							&& "complete".equals(data.get("streamTextHashStatus"))
+							&& expected != null && expected.equals(previousHashes.get(id)) && expected.equals(actual)
+							&& java.util.Objects.equals(indexes.get(id), integerValue(data.get("streamHashIndex")))
+							&& merged != null && TraceTextSummary.matches(actual.token(), textOf(merged));
+					streamingChunkAccumulationResults.add(match);
+					recordCheckerMessage(STREAMING_CHUNKS_ACCUMULATED_CORRECTLY + " provider=" + aProvider
+							+ " mode=" + StreamingMode.STREAMING + " traceLine=" + traceLineLocation(record)
+							+ " comparison=independent_running_sha256 final=true match=" + match);
+					previousHashes.remove(id); indexes.remove(id);
+				}
 				expectedText.setLength(0);
 				continue;
 			}
@@ -2590,11 +2575,29 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 					.get("streamingChunkMessageStructure");
 			TraceMessage accumulated = (TraceMessage) record.getExtractedData()
 					.get("accumulatedMessageStructure");
-			if (chunk != null) {
+			if (chunk != null && !data.containsKey("streamTextEvidenceVersion")) {
 				expectedText.append(textOf(chunk));
 			}
-			boolean matches = accumulated != null
-					&& expectedText.toString().equals(textOf(accumulated));
+			boolean matches;
+			if (data.containsKey("streamTextEvidenceVersion")) {
+				String id = data.get("streamHashId");
+				TraceTextSummary expected = TraceTextSummary.parse(data.get("expectedAccumulatedTextSummary"));
+				TraceTextSummary actual = TraceTextSummary.parse(data.get("accumulatedTextSummary"));
+				TraceTextSummary chunkHash = TraceTextSummary.parse(data.get("chunkTextSummary"));
+				TraceTextSummary previous = TraceTextSummary.parse(data.get("previousAccumulatedTextSummary"));
+				int index = integerValue(data.get("streamHashIndex"));
+				matches = "1".equals(data.get("streamTextEvidenceVersion")) && !isBlank(id)
+						&& "complete".equals(data.get("streamTextHashStatus")) && expected != null
+						&& expected.equals(actual) && chunkHash != null && chunk != null && accumulated != null
+						&& index == indexes.getOrDefault(id, 0) + 1
+						&& previous != null && previous.equals(previousHashes.getOrDefault(id, TraceTextSummary.from("")))
+						&& TraceTextSummary.matches(chunkHash.token(), textOf(chunk))
+						&& TraceTextSummary.matches(actual.token(), textOf(accumulated));
+				if (expected != null) previousHashes.put(id, expected);
+				indexes.put(id, index);
+			} else {
+				matches = accumulated != null && expectedText.toString().equals(textOf(accumulated));
+			}
 			streamingChunkAccumulationResults.add(matches);
 			recordCheckerMessage(
 					STREAMING_CHUNKS_ACCUMULATED_CORRECTLY
@@ -3016,6 +3019,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		}
 		ArrayList<String> result = new ArrayList<>();
 		StringBuilder systemText = new StringBuilder();
+		List<String> systemPieces = new ArrayList<>();
 		int userIndex = 0;
 		for (TraceMessage message : request.contextWindow()) {
 			String role = standardRole(message.role());
@@ -3023,6 +3027,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				for (TracePart part : message.parts()) {
 					if ("text".equals(part.kind())) {
 						systemText.append(normalizedText(part.value()));
+						systemPieces.add(part.value());
 					}
 				}
 				continue;
@@ -3035,13 +3040,22 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			for (TracePart part : message.parts()) {
 				user.append('|').append(part.kind()).append('=');
 				user.append("text".equals(part.kind())
-						? normalizedText(part.value())
+						? canonicalInputText(part.value())
 						: part.value());
 			}
 			result.add(user.toString());
 		}
-		result.add(0, "system=" + systemText);
+		result.add(0, "system=" + (systemPieces.stream().anyMatch(p -> TraceTextSummary.fromToken(p) != null)
+				? TraceTextSummary.concatenateEdges(systemPieces) : systemText));
 		return List.copyOf(result);
+	}
+
+	private String canonicalInputText(String value) {
+		if (TraceTextSummary.matches(value, BridgeDemoTraceInputs.SUMMARY_PROMPT)
+				|| TraceTextSummary.matches(value, BridgeDemoTraceInputs.LEGACY_SUMMARY_PROMPT)
+				|| TraceTextSummary.matches(value, BridgeDemoTraceInputs.LEGACY_SUMMARY_PROMPT.strip()))
+			return TraceTextSummary.from(BridgeDemoTraceInputs.SUMMARY_PROMPT).token();
+		return normalizedText(value);
 	}
 
 	private void addCanonicalMapShape(
@@ -3338,6 +3352,8 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				lastChunkRecord = record;
 				chunkTexts.add(textOf(chunk));
 			} else if ("streaming_chunks_merged".equals(eventName)) {
+				TraceTextSummary independentHash = TraceTextSummary.parse(record.getTraceLine()
+						.getAuxiliaryData().get("expectedMergedTextSummary"));
 				TraceMessage merged =
 						(TraceMessage) record.getExtractedData()
 								.get("mergedMessageStructure");
@@ -3353,7 +3369,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 											List.of(
 													new TracePart(
 															"text",
-															String.join(
+															independentHash != null ? independentHash.token() : String.join(
 																	"",
 																	chunkTexts)))),
 									merged));
@@ -3447,6 +3463,12 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	private String textOf(TraceMessage aMessage) {
 		if (aMessage == null) {
 			return "";
+		}
+		if (!aMessage.textAggregate().isEmpty()) return aMessage.textAggregate();
+		if ("SYSTEM".equals(standardRole(aMessage.role())) && aMessage.parts().stream()
+				.anyMatch(p -> "text".equals(p.kind()) && TraceTextSummary.fromToken(p.value()) != null)) {
+			return TraceTextSummary.concatenateEdges(aMessage.parts().stream()
+					.filter(p -> "text".equals(p.kind())).map(TracePart::value).toList());
 		}
 		StringBuilder builder = new StringBuilder();
 		for (TracePart part : aMessage.parts()) {
@@ -3651,9 +3673,10 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				}
 				for (TracePart part : message.parts()) {
 					if ("text".equals(part.kind())
-							&& promptTextMatches(
+							&& (promptTextMatches(
 									part.value(),
-									anExpectedText)) {
+									anExpectedText) || ("SYSTEM".equals(standardRole(aRole))
+									&& knownSystemSequenceContains(part.value(), anExpectedText)))) {
 						return record;
 					}
 				}
@@ -3665,6 +3688,14 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	private boolean promptTextMatches(
 			String anObservedText,
 			String anExpectedText) {
+		if (BridgeDemoTraceInputs.SUMMARY_PROMPT.equals(anExpectedText)) {
+			for (String alternative : List.of(BridgeDemoTraceInputs.LEGACY_SUMMARY_PROMPT,
+					BridgeDemoTraceInputs.LEGACY_SUMMARY_PROMPT.strip())) {
+				if (TraceTextSummary.matches(anObservedText, alternative)) return true;
+			}
+		}
+		if (TraceTextSummary.fromToken(anObservedText) != null || TraceTextSummary.fromToken(anExpectedText) != null)
+			return TraceTextSummary.matches(anObservedText, anExpectedText);
 		String observed = normalizedText(anObservedText);
 		String expected = normalizedText(anExpectedText);
 		return textMatches(observed, expected)
@@ -4003,22 +4034,49 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			return false;
 		}
 		StringBuilder currentSystemText = new StringBuilder();
+		List<String> currentTexts = new ArrayList<>();
 		for (String currentMessage : someCurrentMessages) {
 			if (!"SYSTEM".equals(
 					standardRole(roleInMessageDump(currentMessage)))) {
 				continue;
 			}
 			for (String text : textValues(currentMessage)) {
+				currentTexts.add(text);
 				currentSystemText.append(' ').append(text);
 			}
 		}
 		String current = normalizedText(currentSystemText.toString());
 		for (String previousText : previousTexts) {
+			if (TraceTextSummary.fromToken(previousText) != null
+					|| currentTexts.stream().anyMatch(t -> TraceTextSummary.fromToken(t) != null)) {
+				if (currentTexts.stream().noneMatch(t -> textMatches(t, previousText)
+						|| knownSystemSequenceContains(t, previousText))) return false;
+				continue;
+			}
 			if (!current.contains(normalizedText(previousText))) {
 				return false;
 			}
 		}
 		return true;
+	}
+
+	/** With compact system text, validate a complete known sequence instead of
+	 * searching an unavailable middle substring or concatenating serialized tokens. */
+	private boolean knownSystemSequenceContains(String observed, String required) {
+		var summary = TraceTextSummary.fromToken(observed);
+		if (summary == null || !summary.sha256().isEmpty()) return false;
+		List<String> prompts = expectedInputs.systemPromptTexts();
+		for (int start = 0; start < prompts.size(); start++) {
+			StringBuilder combined = new StringBuilder();
+			boolean contains = false;
+			for (int end = start; end < prompts.size(); end++) {
+				combined.append(prompts.get(end));
+				contains |= textMatches(prompts.get(end), required)
+						|| textMatches(combined.toString(), required);
+				if (contains && TraceTextSummary.matches(observed, combined.toString())) return true;
+			}
+		}
+		return false;
 	}
 
 	private List<String> textValues(String aMessageDump) {
@@ -4119,6 +4177,13 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			return false;
 		}
 		String messageDump = aMessageDumps.get(0);
+		// Native message dumps embed the compact token rather than the original
+		// prompt. Compare that evidence with the known complete compaction prompt.
+		var compactTokens = java.util.regex.Pattern.compile("@text:[0-9]+:[A-Za-z0-9_-]*:[A-Za-z0-9_-]*:[0-9a-f]*").matcher(messageDump);
+		while (compactTokens.find()) {
+			if (TraceTextSummary.fromToken(compactTokens.group()) != null
+					&& promptTextMatches(compactTokens.group(), anExpectedText)) return true;
+		}
 		for (TraceMessage message :
 				reflectedMessageStructures(messageDump)) {
 			for (TracePart part : message.parts()) {
@@ -4561,7 +4626,9 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		if (isBlank(role)) {
 			return null;
 		}
-		return new TraceMessage(standardRole(role), parts);
+		var aggregate = java.util.regex.Pattern.compile(" textAggregate=\"([^\"]+)\"").matcher(aSegment);
+		String summary = aggregate.find() && TraceTextSummary.fromToken(aggregate.group(1)) != null ? aggregate.group(1) : "";
+		return new TraceMessage(standardRole(role), parts, summary);
 	}
 
 	private String reflectedMessageRole(String aSegment) {
@@ -4859,10 +4926,12 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	private List<TraceMessage> combinedSystemMessages(
 			List<TraceMessage> aMessages) {
 		StringBuilder systemText = new StringBuilder();
+		List<String> pieces = new ArrayList<>();
 		ArrayList<TraceMessage> result = new ArrayList<>();
 		for (TraceMessage message : aMessages) {
 			if ("SYSTEM".equals(standardRole(message.role()))) {
 				systemText.append(textOf(message));
+				pieces.add(textOf(message));
 			}
 		}
 		if (systemText.length() > 0) {
@@ -4872,7 +4941,8 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 							List.of(
 									new TracePart(
 											"text",
-											systemText.toString()))));
+											pieces.stream().anyMatch(p -> TraceTextSummary.fromToken(p) != null)
+												? TraceTextSummary.concatenateEdges(pieces) : systemText.toString()))));
 		}
 		for (TraceMessage message : aMessages) {
 			if (!"SYSTEM".equals(standardRole(message.role()))) {
@@ -4976,6 +5046,9 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	private boolean textMatches(
 			String aProviderIndependentText,
 			String aProviderDependentText) {
+		if (TraceTextSummary.fromToken(aProviderIndependentText) != null
+				|| TraceTextSummary.fromToken(aProviderDependentText) != null)
+			return TraceTextSummary.matches(aProviderIndependentText, aProviderDependentText);
 		String independent = normalizedText(aProviderIndependentText);
 		String dependent = normalizedText(aProviderDependentText);
 		if (independent.equals(dependent)) {

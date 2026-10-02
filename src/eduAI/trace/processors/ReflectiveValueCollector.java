@@ -179,12 +179,24 @@ public class ReflectiveValueCollector {
 				new ArrayList<>(types));
 	}
 
+	/** Actual runtime object types, including opaque SDK objects without leaf fields. */
+	public List<ValueOccurrence> collectRuntimeTypes(String dump) {
+		if (dump == null) return List.of();
+		List<StructuralFrame> frames = structuralFrames(dump);
+		List<ValueOccurrence> result = new ArrayList<>();
+		Matcher types = LABELED_TYPE.matcher(maskQuotedText(dump));
+		while (types.find()) result.add(occurrence(dump, frames, ValueKind.ENUM_OR_SYMBOL,
+				types.group(2), types.end()));
+		return List.copyOf(result);
+	}
+
 	private List<StructuralFrame> structuralFrames(String aDump) {
 		ArrayList<StructuralFrame> result = new ArrayList<>();
+		String unquoted = maskQuotedText(aDump);
 		for (String marker : BODY_MARKERS) {
 			int from = 0;
 			while (from < aDump.length()) {
-				int markerOffset = aDump.indexOf(marker, from);
+				int markerOffset = unquoted.indexOf(marker, from);
 				if (markerOffset < 0) {
 					break;
 				}
@@ -237,7 +249,7 @@ public class ReflectiveValueCollector {
 	}
 
 	private LabeledType labeledTypeBefore(String aDump, int anOffset) {
-		int start = Math.max(0, anOffset - 2048);
+		int start = 0;
 		String prefix = maskQuotedText(aDump.substring(start, anOffset));
 		Matcher matcher = LABELED_TYPE.matcher(prefix);
 		LabeledType result = null;
@@ -310,6 +322,11 @@ public class ReflectiveValueCollector {
 			String anExpectedValue) {
 		if (aStart >= aDump.length()) {
 			return false;
+		}
+		ParsedValue stored = parseValue(aDump, aStart);
+		if (stored != null && (eduAI.trace.TraceTextSummary.fromToken(stored.value()) != null
+				|| eduAI.trace.TraceTextSummary.fromToken(anExpectedValue) != null)) {
+			return eduAI.trace.TraceTextSummary.matches(stored.value(), anExpectedValue);
 		}
 		boolean quoted = aDump.charAt(aStart) == '"';
 		int sourceIndex = quoted ? aStart + 1 : aStart;

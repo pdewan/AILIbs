@@ -8,7 +8,7 @@ public class OllamaTraceInterpreter
 		extends AbstractProviderTraceInterpreter {
 	private static final Pattern MESSAGE_PATTERN =
 			Pattern.compile(
-					"OllamaChatMessage\\(role=([^,)]*), thinking=\\\\?\"(?:\\\\.|[^\"\\\\])*\\\\?\", response=\\\\?\"((?:\\\\.|[^\"\\\\])*)\\\\?\", images=(\\d+), imageBytes=(\\d+), imageSummary=imageBytes\\(count=(\\d+),prefix=([0-9a-f]*),suffix=([0-9a-f]*)\\)",
+					"OllamaChatMessage\\(role=([^,)]*), thinking=(?:null|\\\\?\"(?:\\\\.|[^\"\\\\])*\\\\?\"), response=\\\\?\"((?:\\\\.|[^\"\\\\])*)\\\\?\", images=(\\d+), imageBytes=(\\d+), imageSummary=imageBytes\\(count=(\\d+),prefix=([0-9a-f]*),suffix=([0-9a-f]*)\\)",
 					Pattern.DOTALL);
 	private static final Pattern RESPONSE_MESSAGE_PATTERN = Pattern.compile(
 			"\\\\?\"role\\\\?\"\\s*:\\s*\\\\?\"assistant\\\\?\".*?"
@@ -111,6 +111,9 @@ public class OllamaTraceInterpreter
 	private final NativeMetadataRegistry metadata = new NativeMetadataRegistry();
 
 	public OllamaTraceInterpreter() {
+		for (String field : List.of("createdAt", "done", "totalDuration", "loadDuration", "promptEvalDuration", "evalDuration")) {
+			metadata.register(field, Pattern.compile("\\b" + field + "=([^,)]*)"));
+		}
 		metadata.register("inputTokens", PROMPT_EVAL_COUNT_PATTERN);
 		metadata.register("outputTokens", EVAL_COUNT_PATTERN);
 		metadata.register("resolvedModel", MODEL_PATTERN);

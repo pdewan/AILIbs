@@ -293,6 +293,8 @@ public class BridgeDemoTraceFilesProcessorDelegate {
 
 	public Map<String, GenericTracesFileProcessor.TraceFiles>
 			bridgeDemoTraceFiles() {
+		System.out.println(GenericTracesFileProcessor.INFO_MESSAGE_PREFIX
+				+ " Searching for trace files; current directory is: " + Path.of(".").toAbsolutePath().normalize());
 		Map<String, GenericTracesFileProcessor.TraceFiles> result =
 				new LinkedHashMap<>();
 		result.put(
@@ -309,7 +311,17 @@ public class BridgeDemoTraceFilesProcessorDelegate {
 	}
 
 	public Path traceFile(String aFileName) {
-		return traceDirectory.resolve(aFileName);
+		String preferred = aFileName.replace("OllamaStreamingBridge", "OllamaBridgeStreaming")
+				.replace("OllamaNonStreamingBridge", "OllamaBridgeNonStreaming");
+		Path resolvedTraceDirectory = TraceDirectorySearch.find(traceDirectory,
+				List.of(preferred, preferred + ".gz", aFileName, aFileName + ".gz"));
+		for (String name : java.util.List.of(preferred, aFileName)) {
+			Path plain = resolvedTraceDirectory.resolve(name);
+			if (Files.isRegularFile(plain)) return plain;
+			Path compressed = resolvedTraceDirectory.resolve(name + ".gz");
+			if (Files.isRegularFile(compressed)) return compressed;
+		}
+		return resolvedTraceDirectory.resolve(preferred);
 	}
 
 	public GenericTracesFileProcessor.ExpectedInputs
@@ -324,7 +336,14 @@ public class BridgeDemoTraceFilesProcessorDelegate {
 						SUMMARY_PROMPT,
 						"Arthur?"),
 				List.of(SUMMARY_PROMPT),
-				allBytes(Path.of(BridgeDemoTraceInputs.IMAGE_FILE_NAME)));
+				allBytes(referenceImageFile()));
+	}
+
+	private Path referenceImageFile() {
+		System.out.println(GenericTracesFileProcessor.INFO_MESSAGE_PREFIX
+				+ " Searching for reference image; current directory is: " + Path.of(".").toAbsolutePath().normalize());
+		String name = BridgeDemoTraceInputs.IMAGE_FILE_NAME;
+		return TraceDirectorySearch.find(Path.of("."), List.of(name)).resolve(name);
 	}
 
 	public TraceRun runTrace() throws IOException {
@@ -450,6 +469,9 @@ public class BridgeDemoTraceFilesProcessorDelegate {
 		try {
 			return Files.readAllBytes(aPath);
 		} catch (IOException e) {
+			System.err.println(GenericTracesFileProcessor.ERROR_MESSAGE_PREFIX
+					+ " Cannot read expected reference image " + aPath.toAbsolutePath().normalize()
+					+ "; expected-image checks cannot pass. " + e.getMessage());
 			return new byte[0];
 		}
 	}

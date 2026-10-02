@@ -9,6 +9,10 @@ public class GeminiTraceInterpreter
 	private final NativeMetadataRegistry metadata = new NativeMetadataRegistry();
 
 	public GeminiTraceInterpreter() {
+		for (String field : List.of("responseId", "createTime", "totalTokenCount", "cachedContentTokenCount",
+				"thoughtsTokenCount", "toolUsePromptTokenCount", "finishMessage")) {
+			metadata.register(field, Pattern.compile("\\b" + field + "=Optional\\[([^\\[\\]]+)\\]"));
+		}
 		metadata.register("inputTokens", Pattern.compile(
 				"usageMetadata=Optional\\[GenerateContentResponseUsageMetadata\\{.*?\\bpromptTokenCount=Optional\\[([0-9]+)\\]", Pattern.DOTALL));
 		metadata.register("outputTokens", Pattern.compile(
@@ -122,18 +126,21 @@ public class GeminiTraceInterpreter
 		if (aConfigurationDump == null) {
 			return List.of();
 		}
+		int summaries = aConfigurationDump.indexOf(" systemTextSummaries=");
+		if (summaries >= 0) {
+			String tail = aConfigurationDump.substring(summaries + " systemTextSummaries=".length());
+			var tokens = Pattern.compile("@text:[0-9]+:[A-Za-z0-9_-]*:[A-Za-z0-9_-]*:").matcher(tail);
+			List<GenericTracesFileProcessor.TraceMessage> messages = new ArrayList<>();
+			while (tokens.find()) messages.add(message("SYSTEM", List.of(textPart(tokens.group()))));
+			return messages;
+		}
 		ArrayList<GenericTracesFileProcessor.TraceMessage> result =
 				new ArrayList<>();
 		java.util.regex.Matcher matcher =
-				SYSTEM_INSTRUCTION_PATTERN.matcher(aConfigurationDump);
+				Pattern.compile("systemInstruction=Optional\\[Content\\{(.*?)\\}\\]", Pattern.DOTALL).matcher(aConfigurationDump);
 		while (matcher.find()) {
-			result.add(
-					message(
-							"SYSTEM",
-							List.of(
-									textPart(
-											unescapeTraceString(
-													matcher.group(1))))));
+			var texts = RESPONSE_TEXT_PATTERN.matcher(matcher.group(1));
+			while (texts.find()) result.add(message("SYSTEM", List.of(textPart(unescapeTraceString(texts.group(1))))));
 		}
 		return result;
 	}

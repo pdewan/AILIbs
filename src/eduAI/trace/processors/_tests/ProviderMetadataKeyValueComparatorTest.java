@@ -22,8 +22,9 @@ public class ProviderMetadataKeyValueComparatorTest {
 		assertMappings(new OllamaTraceInterpreter(), ollama, "stop");
 		NativeMetadataRegistry registry = new OllamaTraceInterpreter().nativeMetadataRegistry(ollama);
 		assertDifference(registry, ollama, "totalTimeMs", "1234", null);
-		assertDifference(registry, ollama, "totalTimeMs", "1234567890", "expected=1234");
-		assertDifference(registry, ollama, "incorrect", "1234", "unsupported metadata key");
+		assertDifference(registry, ollama, "duration in native units", "1234567890", null);
+		assertDifference(registry, ollama, "arbitrary duration name", "1234", null);
+		assertDifference(registry, ollama, "arbitrary duration name", "999999", "absent from native metadata");
 		System.out.println("Provider metadata key-value checks passed");
 	}
 
@@ -33,8 +34,9 @@ public class ProviderMetadataKeyValueComparatorTest {
 		assertDifference(registry, source, "outputTokens", "12", null);
 		assertDifference(registry, source, "resolvedModel", "model", null);
 		assertDifference(registry, source, "terminationReason", reason, null);
-		assertDifference(registry, source, "inputTokens", "12", "expected=1185");
-		assertDifference(registry, source, "incorrect", "1185", "unsupported metadata key");
+		assertDifference(registry, source, "inputTokens", "12", null);
+		assertDifference(registry, source, "student chosen label", "1185", null);
+		assertDifference(registry, source, "student chosen label", "99999", "absent from native metadata");
 		assertDifference(registry, "", "inputTokens", "1185", "absent or unreadable");
 	}
 
@@ -56,7 +58,7 @@ public class ProviderMetadataKeyValueComparatorTest {
 						+ "## lib {metadata_translated} [none: main] "
 						+ "(single_model_request_processing: sample.MetadataAdapter) "
 						+ "<metadataHandlerClass=\"sample.MetadataAdapter\" "
-						+ "propertyName=\"inputTokens\" "
+						+ "propertyName=\"student_defined_counter\" "
 						+ "propertyValue=\"1185\" "
 						+ "providerDependentSource=\"GenerateContentResponse{usageMetadata=Optional[GenerateContentResponseUsageMetadata{promptTokenCount=Optional["
 						+ aStoredValue + "]}]}\"> ##\n",
