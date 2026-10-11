@@ -17,6 +17,7 @@ import eduAI.trace.TraceLine;
 import eduAI.trace.TraceLineParser;
 import eduAI.trace.ImageByteSummary;
 import eduAI.trace.TraceTextSummary;
+import eduAI.trace.TraceMessageRole;
 import eduAI.trace.lib.StreamingMode;
 
 public class GenericTracesFileProcessor implements TraceFilesProcessor {
@@ -567,7 +568,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				List<String> invalidEvidence = matchingRecords.stream()
 						.filter(record -> !validTraceEventArguments(
 								record, anEventName))
-						.map(this::traceLineLocation)
+						.map(record -> invalidTraceEventEvidence(record, anEventName))
 						.toList();
 				boolean passed = !evidence.isEmpty()
 						&& invalidEvidence.isEmpty();
@@ -586,6 +587,16 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			}
 		}
 		return traceCheckResult(messages);
+	}
+
+	private String invalidTraceEventEvidence(TraceRecord record, String event) {
+		String reason = "required trace arguments missing or inconsistent";
+		if ("message_translated".equals(event)
+				&& firstCanonicalMessageFromArgument(record, "providerIndependentMessage") == null) {
+			reason = "generic message role not recognized or message dump unreadable; "
+					+ "expected a role field containing an enum or String";
+		}
+		return traceLineLocation(record) + " (" + reason + ")";
 	}
 
 	private boolean validTraceEventArguments(
@@ -687,7 +698,8 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		String identity = data.get(anIdentityField);
 		String dump = data.get(aDumpField);
 		return !isBlank(identity) && dump != null
-				&& dump.contains("toString=\"" + identity + "\"");
+				&& (dump.contains("identity=\"" + identity + "\"")
+						|| dump.contains("toString=\"" + identity + "\""));
 	}
 
 	public void processTraceFile(
@@ -4632,11 +4644,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	}
 
 	private String reflectedMessageRole(String aSegment) {
-		java.util.regex.Matcher matcher =
-				java.util.regex.Pattern
-						.compile("role:\\s+[^,}]+\\s+value=([A-Za-z_]+)")
-						.matcher(aSegment);
-		return matcher.find() ? matcher.group(1) : "";
+		return TraceMessageRole.fromDump(aSegment);
 	}
 
 	private List<TracePart> reflectedMessageParts(String aSegment) {

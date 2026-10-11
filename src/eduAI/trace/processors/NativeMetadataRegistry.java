@@ -8,6 +8,8 @@ import java.util.regex.Pattern;
 
 /** Extracts native metadata values without prescribing generic property names. */
 public class NativeMetadataRegistry {
+	private static final Pattern DURATION_DUMP = Pattern.compile(
+			"^[^:]+: java\\.time\\.Duration interfaces=\\[[^]]*\\] toString=\"([^\"]+)\"$");
 	private final Map<String, Function<String, String>> extractors = new LinkedHashMap<>();
 
 	public void register(String key, Function<String, String> extractor) {
@@ -30,8 +32,19 @@ public class NativeMetadataRegistry {
 			if (value != null) values.add(value);
 		}
 		if (values.isEmpty()) return "native metadata values absent or unreadable";
-		return values.contains(actual) ? null
+		return values.contains(durationValue(actual)) ? null
 				: "translated metadata value absent from native metadata; actual=" + actual;
+	}
+
+	private static String durationValue(String actual) {
+		if (actual == null) return null;
+		Matcher dump = DURATION_DUMP.matcher(actual);
+		String value = dump.matches() ? dump.group(1) : actual;
+		try {
+			return java.time.Duration.parse(value).toString();
+		} catch (java.time.format.DateTimeParseException e) {
+			return actual;
+		}
 	}
 
 	/** Compatibility overload; key is diagnostic information, never a matching rule. */

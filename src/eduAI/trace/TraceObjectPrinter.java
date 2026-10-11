@@ -53,6 +53,19 @@ public final class TraceObjectPrinter {
 		return format(variableName(aVariableName), anObject, new IdentityHashMap<>());
 	}
 
+	/** Stable-size evidence for objects whose state is not the event's payload. */
+	public static String formatIdentity(String name, Object value) {
+		java.util.Objects.requireNonNull(value, name);
+		return variableName(name) + ": " + className(value)
+				+ " interfaces=" + interfaceNames(value)
+				+ " identity=\"" + objectIdentity(value) + "\"";
+	}
+
+	public static String objectIdentity(Object value) {
+		java.util.Objects.requireNonNull(value, "trace object identity");
+		return className(value) + "@" + Integer.toHexString(System.identityHashCode(value));
+	}
+
 	/**
 	 * Compatibility overload. Traversal now visits all elements and fields;
 	 * reference cycles, rather than a depth cutoff, stop recursive expansion.
@@ -447,7 +460,7 @@ public final class TraceObjectPrinter {
 			if (COMPACT.get()) {
 				if (usesExternalToString(anObject.getClass()))
 					value = CompactNativeText.format(value, anObject.getClass().getName().contains("GenerateContentConfig"));
-				else if (!value.equals(anObject.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(anObject))))
+				else if (!value.equals(objectIdentity(anObject)))
 					value = TraceTextSummary.compact(value, SYSTEM_TEXT.get());
 			}
 			return "\"" + escaped(value) + "\"";

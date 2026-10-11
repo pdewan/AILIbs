@@ -6,6 +6,7 @@ import eduAI.trace.GenericTrace;
 import eduAI.trace.RunningTextHash;
 import eduAI.trace.TraceTextSummary;
 import eduAI.trace.TraceMessageText;
+import eduAI.trace.TraceMessageRole;
 import eduAI.trace.TraceObjectPrinter;
 
 /** Independent text accounting: never derives the expected hash from the merger result. */
@@ -46,7 +47,7 @@ final class StreamingTextEvidence {
 		State state = STATES.remove(merger);
 		String dump = TraceObjectPrinter.formatFullEvidence("mergedMessage", mergedMessage);
 		// The same merger also assembles system instructions without streamed chunks.
-		if (state == null && java.util.regex.Pattern.compile("role:\\s+[^,}]+\\s+value=SYSTEM\\b").matcher(dump).find()) return;
+		if (state == null && "SYSTEM".equalsIgnoreCase(TraceMessageRole.fromDump(dump))) return;
 		String merged = text(dump);
 		data.put("streamTextEvidenceVersion", "1");
 		if (state != null) {

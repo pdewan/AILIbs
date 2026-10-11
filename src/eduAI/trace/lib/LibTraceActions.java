@@ -28,7 +28,7 @@ public class LibTraceActions {
 				interfaceNames(aServerHandleFactoryRegistry));
 		data.put(
 				"serverHandleFactoryRegistry",
-				traceValue(
+				TraceObjectPrinter.formatIdentity(
 						"serverHandleFactoryRegistry",
 						aServerHandleFactoryRegistry));
 		data.put(
@@ -39,7 +39,7 @@ public class LibTraceActions {
 				interfaceNames(aServerHandleFactory));
 		data.put(
 				"serverHandleFactory",
-				traceValue("serverHandleFactory", aServerHandleFactory));
+				TraceObjectPrinter.formatIdentity("serverHandleFactory", aServerHandleFactory));
 		data.put(
 				"serverHandleFactoryIdentity",
 				objectIdentity(aServerHandleFactory));
@@ -104,7 +104,7 @@ public class LibTraceActions {
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
 				aSourceClass,
 				LibTraceEvent.SERVER_HANDLE_FACTORY_SET_FOR_PROVIDER,
-				data(
+				identityData(
 						"serverHandleFactoryClass",
 						aServerHandleFactory,
 						"serverHandleFactory",
@@ -124,7 +124,7 @@ public class LibTraceActions {
 				interfaceNames(aServerHandleFactory));
 		data.put(
 				"serverHandleFactory",
-				traceValue("serverHandleFactory", aServerHandleFactory));
+				TraceObjectPrinter.formatIdentity("serverHandleFactory", aServerHandleFactory));
 		data.put(
 				"serverHandleFactoryIdentity",
 				objectIdentity(aServerHandleFactory));
@@ -136,7 +136,7 @@ public class LibTraceActions {
 				interfaceNames(aServerHandle));
 		data.put(
 				"serverHandle",
-				traceValue("serverHandle", aServerHandle));
+				TraceObjectPrinter.formatIdentity("serverHandle", aServerHandle));
 		data.put("serverHandleIdentity", objectIdentity(aServerHandle));
 		LibTrace.traceDesignPattern(
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
@@ -152,7 +152,7 @@ public class LibTraceActions {
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
 				aSourceClass,
 				LibTraceEvent.SERVER_HANDLE_SELECTED_FOR_PROVIDER,
-				data(
+				identityData(
 						"serverHandleClass",
 						aServerHandle,
 						"serverHandle",
@@ -301,7 +301,7 @@ public class LibTraceActions {
 			data.put("streamHandler", "null");
 		} else {
 			data =
-					data(
+					identityData(
 							"streamHandlerClass",
 							aStreamHandler,
 							"streamHandler",
@@ -321,7 +321,7 @@ public class LibTraceActions {
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
 				aSourceClass,
 				LibTraceEvent.MESSAGE_MERGER_FACTORY_SET,
-				data(
+				identityData(
 						"messageMergerFactoryClass",
 						aMessageMergerFactory,
 						"messageMergerFactory",
@@ -341,7 +341,7 @@ public class LibTraceActions {
 				interfaceNames(aMessageMergerFactoryRegistry));
 		data.put(
 				"streamChunkMergerFactoryRegistry",
-				traceValue(
+				TraceObjectPrinter.formatIdentity(
 						"streamChunkMergerFactoryRegistry",
 						aMessageMergerFactoryRegistry));
 		data.put(
@@ -355,7 +355,7 @@ public class LibTraceActions {
 				TraceObjectPrinter.methodSignatures(aMessageMergerFactory));
 		data.put(
 				"streamChunkMergerFactory",
-				traceValue(
+				TraceObjectPrinter.formatIdentity(
 						"streamChunkMergerFactory",
 						aMessageMergerFactory));
 		LibTrace.traceDesignPattern(
@@ -372,7 +372,7 @@ public class LibTraceActions {
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
 				aSourceClass,
 				LibTraceEvent.MESSAGE_MERGER_CREATED,
-				data(
+				identityData(
 						"messageMergerClass",
 						aMessageMerger,
 						"messageMerger",
@@ -403,13 +403,7 @@ public class LibTraceActions {
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
 				aSourceClass,
 				LibTraceEvent.STREAMING_CHUNK_SENT_TO_MERGER,
-				data(
-						"messageMergerClass",
-						aMessageMerger,
-						"streamingChunk",
-						aChunkMessage,
-						"messageMerger",
-						aMessageMerger));
+				streamingMergerData(aMessageMerger, "streamingChunk", aChunkMessage));
 	}
 
 	public static synchronized void traceStreamingChunkAccumulated(
@@ -417,11 +411,9 @@ public class LibTraceActions {
 			Object aMessageMerger,
 			Object aChunkMessage,
 			Object anAccumulatedMessage) {
-		Map<String, String> evidence = data(
-				"messageMergerClass", aMessageMerger,
-				"streamingChunk", aChunkMessage,
-				"accumulatedMessage", anAccumulatedMessage,
-				"messageMerger", aMessageMerger);
+		Map<String, String> evidence = streamingMergerData(
+				aMessageMerger, "streamingChunk", aChunkMessage);
+		evidence.put("accumulatedMessage", traceValue("accumulatedMessage", anAccumulatedMessage));
 		StreamingTextEvidence.accumulate(aMessageMerger, aChunkMessage, anAccumulatedMessage, evidence);
 		LibTrace.traceDesignPattern(
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
@@ -434,16 +426,22 @@ public class LibTraceActions {
 			Class<?> aSourceClass,
 			Object aMessageMerger,
 			Object aMergedMessage) {
-		Map<String, String> evidence = data(
-				"messageMergerClass", aMessageMerger,
-				"mergedMessage", aMergedMessage,
-				"messageMerger", aMessageMerger);
+		Map<String, String> evidence = streamingMergerData(
+				aMessageMerger, "mergedMessage", aMergedMessage);
 		StreamingTextEvidence.finish(aMessageMerger, aMergedMessage, evidence);
 		LibTrace.traceDesignPattern(
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
 				aSourceClass,
 				LibTraceEvent.STREAMING_CHUNKS_MERGED,
 				evidence);
+	}
+
+	private static Map<String, String> streamingMergerData(
+			Object merger, String payloadName, Object payload) {
+		Map<String, String> result = identityData(
+				"messageMergerClass", merger, "messageMerger", merger);
+		result.put(payloadName, traceValue(payloadName, payload));
+		return result;
 	}
 
 	public static void traceStreamingCallbackInvoked(
@@ -496,7 +494,7 @@ public class LibTraceActions {
 				TraceObjectPrinter.methodSignatures(aStreamingCallback));
 		data.put(
 				"streamingCallback",
-				traceValue("streamingCallback", aStreamingCallback));
+				TraceObjectPrinter.formatIdentity("streamingCallback", aStreamingCallback));
 		data.put(
 				"callbackArgument",
 				traceValue("callbackArgument", aCallbackArgument));
@@ -709,6 +707,23 @@ public class LibTraceActions {
 				data);
 	}
 
+	/**
+	 * Objects identifying an operation's participants supply tag and identity
+	 * evidence only. Never traverse their fields or invoke their toString().
+	 * Behavioral payloads are emitted separately through data()/traceValue().
+	 */
+	private static Map<String, String> identityData(
+			String aClassKey,
+			Object anObject,
+			String aValueKey,
+			Object aValue) {
+		Map<String, String> result = new LinkedHashMap<>();
+		result.put(aClassKey, TraceObjectPrinter.className(anObject));
+		result.put(interfaceKey(aClassKey), interfaceNames(anObject));
+		result.put(aValueKey, TraceObjectPrinter.formatIdentity(aValueKey, aValue));
+		return result;
+	}
+
 	private static Map<String, String> data(
 			String aClassKey,
 			Object anObject,
@@ -730,10 +745,8 @@ public class LibTraceActions {
 			Object anObject,
 			String aPropertyName,
 			Object aPropertyValue) {
-		Map<String, String> result = new LinkedHashMap<>();
-		result.put(aHandlerClassKey, TraceObjectPrinter.className(aHandler));
-		result.put(interfaceKey(aHandlerClassKey), interfaceNames(aHandler));
-		result.put(aHandlerValueKey, traceValue(aHandlerValueKey, aHandler));
+		Map<String, String> result = identityData(
+				aHandlerClassKey, aHandler, aHandlerValueKey, aHandler);
 		result.put(aObjectClassKey, TraceObjectPrinter.className(anObject));
 		result.put(interfaceKey(aObjectClassKey), interfaceNames(anObject));
 		result.put(aObjectValueKey, traceValue(aObjectValueKey, anObject));
@@ -791,10 +804,7 @@ public class LibTraceActions {
 	}
 
 	private static String objectIdentity(Object anObject) {
-		Objects.requireNonNull(anObject, "trace object identity");
-		return anObject.getClass().getName()
-				+ "@"
-				+ Integer.toHexString(System.identityHashCode(anObject));
+		return TraceObjectPrinter.objectIdentity(anObject);
 	}
 
 	private static String traceValue(String aKey, Object aValue) {

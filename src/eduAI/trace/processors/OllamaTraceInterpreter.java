@@ -109,10 +109,25 @@ public class OllamaTraceInterpreter
 	}
 
 	private final NativeMetadataRegistry metadata = new NativeMetadataRegistry();
+	private static final List<String> DURATION_FIELDS = List.of(
+			"totalDuration", "loadDuration", "promptEvalDuration", "evalDuration");
 
 	public OllamaTraceInterpreter() {
-		for (String field : List.of("createdAt", "done", "totalDuration", "loadDuration", "promptEvalDuration", "evalDuration")) {
+		for (String field : List.of("createdAt", "done")) {
 			metadata.register(field, Pattern.compile("\\b" + field + "=([^,)]*)"));
+		}
+		for (String field : DURATION_FIELDS) {
+			Pattern nanos = Pattern.compile("\\b" + field + "=(-?\\d+)(?=[,)])");
+			metadata.register(field, nanos);
+			metadata.register(field + "AsDuration", source -> {
+				var matcher = nanos.matcher(source);
+				if (!matcher.find()) return null;
+				try {
+					return java.time.Duration.ofNanos(Long.parseLong(matcher.group(1))).toString();
+				} catch (NumberFormatException e) {
+					return null;
+				}
+			});
 		}
 		metadata.register("inputTokens", PROMPT_EVAL_COUNT_PATTERN);
 		metadata.register("outputTokens", EVAL_COUNT_PATTERN);

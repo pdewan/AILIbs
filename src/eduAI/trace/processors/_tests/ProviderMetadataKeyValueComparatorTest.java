@@ -25,7 +25,46 @@ public class ProviderMetadataKeyValueComparatorTest {
 		assertDifference(registry, ollama, "duration in native units", "1234567890", null);
 		assertDifference(registry, ollama, "arbitrary duration name", "1234", null);
 		assertDifference(registry, ollama, "arbitrary duration name", "999999", "absent from native metadata");
+		assertDifference(registry, ollama, "elapsed", "PT1.23456789S", null);
+		assertDifference(registry, ollama, "elapsed", "PT1.234567891S", "absent from native metadata");
+		assertDifference(registry, ollama, "elapsed", "PT1234567.89S", "absent from native metadata");
+		for (String field : java.util.List.of("totalDuration", "loadDuration", "promptEvalDuration", "evalDuration")) {
+			String source = "OllamaChatResponseModel(" + field + "=1234567890)";
+			String dump = eduAI.trace.TraceObjectPrinter.format("propertyValue",
+					java.time.Duration.ofNanos(1234567890L));
+			assertDifference(registry, source, "student duration", dump, null);
+			assertDifference(registry, source, "student duration",
+					eduAI.trace.TraceObjectPrinter.format("propertyValue", java.time.Duration.ofSeconds(2)),
+					"absent from native metadata");
+		}
+		assertDifference(registry, "OllamaChatResponseModel(evalCount=1234567890)",
+				"elapsed", "PT1.23456789S", "absent from native metadata");
+		assertEmittedDuration(java.time.Duration.ofNanos(1234567890L), true);
+		assertEmittedDuration(java.time.Duration.ofMillis(1234567890L), false);
 		System.out.println("Provider metadata key-value checks passed");
+	}
+
+	private static void assertEmittedDuration(java.time.Duration duration, boolean expected) throws IOException {
+		Path file = Files.createTempFile("duration-trace-", ".txt");
+		try {
+			eduAI.trace.GenericTrace.setOutputEnabled(false);
+			eduAI.trace.GenericTrace.setTraceFile(file);
+			var response = new io.github.ollama4j.models.chat.OllamaChatResponseModel();
+			response.setTotalDuration(1234567890L);
+			eduAI.trace.lib.LibTraceActions.traceServerHandleFactoryFetched(
+					ProviderMetadataKeyValueComparatorTest.class, "Ollama", new Object(), new Object());
+			eduAI.trace.lib.LibTraceActions.traceMetadataTranslated(
+					ProviderMetadataKeyValueComparatorTest.class, "elapsed", duration, new Object(), response);
+			eduAI.trace.GenericTrace.clearTraceFile();
+			GenericTracesFileProcessor processor = new GenericTracesFileProcessor();
+			processor.registerProviderTraceInterpreter(new OllamaTraceInterpreter());
+			processor.processTraceFile("Ollama", StreamingMode.NON_STREAMING, file);
+			var result = processor.checkProviderGenericMetadataMatches("Ollama", StreamingMode.NON_STREAMING);
+			if (result.passed() != expected) throw new AssertionError("Duration emission: " + result);
+		} finally {
+			eduAI.trace.GenericTrace.resetTraceDestinations();
+			Files.deleteIfExists(file);
+		}
 	}
 
 	private static void assertMappings(ProviderTraceInterpreter interpreter, String source, String reason) {
