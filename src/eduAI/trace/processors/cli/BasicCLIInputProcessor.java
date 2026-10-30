@@ -60,7 +60,7 @@ public final class BasicCLIInputProcessor implements CLIInputProcessor {
             ordinal++;
             try {
                 if (terminated) throw new IllegalArgumentException("Input after /bye is not consumed");
-                String name = "prompt";
+                String name = CLICommandNames.PROMPT;
                 String argument = raw;
                 Kind kind = Kind.PROMPT;
                 String propertyName = null;
@@ -70,7 +70,7 @@ public final class BasicCLIInputProcessor implements CLIInputProcessor {
                     name = input.substring(1, end);
                     argument = input.substring(end).strip();
                     kind = Kind.COMMAND;
-                    if (name.equals("prop")) {
+                    if (name.equals(CLICommandNames.PROPERTY)) {
                         int equals = argument.indexOf('=');
                         propertyName = (equals < 0 ? argument : argument.substring(0, equals)).strip();
                         CLIPropertyDescriptor descriptor = descriptors.get(propertyName);

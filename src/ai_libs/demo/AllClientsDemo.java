@@ -38,13 +38,16 @@ public class AllClientsDemo {
 			"GEMINI_API_KEY";
 	private static final String DEFAULT_GEMINI_MODEL =
 			"gemini-3.1-flash-lite";
+//			"gemini-1.5-flash";
 	private static final String OPENAI_API_KEY_VARIABLE_NAME =
 			"OPENAI_API_KEY";
 	private static final String DEFAULT_OPENAI_BASE_URL =
 			"http://langchain4j.dev/demo/openai/v1";
 	private static final String DEFAULT_OPENAI_API_KEY = "demo";
 	private static final String DEFAULT_OPENAI_MODEL =
-			"gpt-4o-mini";
+//			"gpt-4o-mini";
+//	"gpt-4o-mini-2024-07-18";
+	"gpt-5.6-luna";
 	private static final String DEFAULT_OLLAMA_BASE_URL =
 			"http://localhost:11434/";
 	private static final String DEFAULT_OLLAMA_MODEL =
@@ -64,11 +67,11 @@ public class AllClientsDemo {
 		System.out.println("Prompt: " + prompt);
 		System.out.println();
 
-		run("Ollama4j", () -> ollamaAnswer(prompt));
+//		run("Ollama4j", () -> ollamaAnswer(prompt));
 		run("Gemini SDK", () -> geminiAnswer(prompt));
-		run("OpenAI via LangChain4j", () -> openAIAnswer(prompt));
-		run("LangChain4j Ollama", () -> langChain4jAnswer(prompt));
-		run("Eliza", () -> elizaAnswer(prompt));
+//		run("OpenAI via LangChain4j", () -> openAIAnswer(prompt));
+//		run("LangChain4j Ollama", () -> langChain4jAnswer(prompt));
+//		run("Eliza", () -> elizaAnswer(prompt));
 	}
 
 	private static void run(

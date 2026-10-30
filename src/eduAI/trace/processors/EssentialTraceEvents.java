@@ -4,6 +4,11 @@ import java.util.Set;
 
 public final class EssentialTraceEvents {
 	private static final Set<String> ALL = Set.of(
+			eduAI.trace.cli.CLITraceActions.Event.COMMAND_HANDLER_FETCHED.eventName(),
+			eduAI.trace.cli.CLITraceActions.Event.COMMAND_HANDLER_RESULTS.eventName(),
+			eduAI.trace.cli.CLITraceActions.Event.PROPERTY_HANDLER_FETCHED.eventName(),
+			eduAI.trace.cli.CLITraceActions.Event.PROPERTY_HANDLER_RESULTS.eventName(),
+			eduAI.trace.cli.CLITraceActions.Event.CLI_PROPERTY_SET.eventName(),
 			"server_handle_factory_fetched",
 			"server_handle_fetched",
 			"message_translated",
@@ -22,6 +27,9 @@ public final class EssentialTraceEvents {
 	}
 
 	public static Set<String> all() {
-		return ALL;
+		java.util.Set<String> result = new java.util.HashSet<>(ALL);
+        for (var event : eduAI.trace.cli.CLIArchitectureTrace.Event.values()) result.add(event.eventName());
+        for (var event : eduAI.trace.cli.MinimalCLITrace.Event.values()) result.add(event.eventName());
+        return java.util.Set.copyOf(result);
 	}
 }

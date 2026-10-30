@@ -4,6 +4,11 @@ import java.util.List;
 import java.util.Map;
 
 public class NativeTraceFilesProcessor extends GenericTracesFileProcessor {
+	public NativeTraceFilesProcessor(java.nio.file.Path sessionTraceFile) {
+		super(sessionTraceFile, null);
+		registerNativeProviderTraceInterpreters();
+	}
+
 	public NativeTraceFilesProcessor() {
 		super();
 		registerNativeProviderTraceInterpreters();
@@ -23,8 +28,8 @@ public class NativeTraceFilesProcessor extends GenericTracesFileProcessor {
 	}
 
 	private void registerNativeProviderTraceInterpreters() {
-		registerProviderTraceInterpreter(new GeminiTraceInterpreter());
-		registerProviderTraceInterpreter(new OllamaTraceInterpreter());
+		registerProviderTraceInterpreter(TraceProviderNames.GEMINI, new GeminiTraceInterpreter());
+		registerProviderTraceInterpreter(TraceProviderNames.OLLAMA, new OllamaTraceInterpreter());
 		registerNativeProviderParameterCheckers();
 		registerProviderSpecificTypes(
 				"Gemini",
@@ -41,33 +46,29 @@ public class NativeTraceFilesProcessor extends GenericTracesFileProcessor {
 						"io.github.ollama4j.models.chat.OllamaChatMessage",
 						"io.github.ollama4j.models.chat.OllamaChatResponseModel",
 						"io.github.ollama4j.models.chat.OllamaChatResult",
-						"io.github.ollama4j.utils.Options"),
+						OllamaTraceInterpreter.CONFIGURATION_TYPE),
 				List.of("io.github.ollama4j."));
 	}
 
 	private void registerNativeProviderParameterCheckers() {
+		for (String timeoutName : List.of(eduAI.properties.AIPropertyNames.TIMEOUT, "timeout_milliseconds")) {
+			registerProviderParameterChecker(
+					new TextProviderParameterChecker(
+							"Gemini", timeoutName, "HttpOptions$Builder", "timeout=Optional["));
+			registerProviderParameterChecker(
+					new TextProviderParameterChecker(
+							"Ollama", timeoutName, "io.github.ollama4j.Ollama", "requestTimeoutSeconds"));
+		}
 		registerProviderParameterChecker(
 				new TextProviderParameterChecker(
 						"Gemini",
-						"timeout_milliseconds",
-						"HttpOptions$Builder",
-						"timeout=Optional["));
-		registerProviderParameterChecker(
-				new TextProviderParameterChecker(
-						"Gemini",
-						"temperature",
+						eduAI.properties.AIPropertyNames.TEMPERATURE,
 						"GenerateContentConfig$Builder",
 						"temperature=Optional["));
 		registerProviderParameterChecker(
 				new TextProviderParameterChecker(
 						"Ollama",
-						"timeout_milliseconds",
-						"io.github.ollama4j.Ollama",
-						"requestTimeoutSeconds"));
-		registerProviderParameterChecker(
-				new TextProviderParameterChecker(
-						"Ollama",
-						"temperature",
+						eduAI.properties.AIPropertyNames.TEMPERATURE,
 						"Options",
 						"temperature="));
 	}

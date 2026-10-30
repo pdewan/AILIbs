@@ -109,9 +109,9 @@ public class ProviderIndependentContextWindowRepresentationTest {
 	}
 
 	private TraceCheckResult result(Path aDirectory) {
-		BridgeDemoTraceFilesProcessor processor =
-				new BridgeDemoTraceFilesProcessor();
-		processor.setTraceDirectory(aDirectory.toString());
+		BridgeDemoTraceInformation information = new BridgeDemoTraceInformation(aDirectory);
+		TraceFilesProcessor processor = new NativeTraceFilesProcessor(
+				information.traceFiles(), information.expectedInputs());
 		processor.processTraceFiles();
 		return processor.checkProviderGenericTextualContextWindowMatches();
 	}

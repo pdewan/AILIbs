@@ -15,7 +15,7 @@ public final class TraceObjectPrinter {
 	private static final ThreadLocal<Boolean> COMPACT = ThreadLocal.withInitial(() -> true);
 	private static final ThreadLocal<Boolean> SYSTEM_TEXT = ThreadLocal.withInitial(() -> false);
 
-	/** Temporary in-memory evidence for trace calculations; never written to the trace. */
+	/** Exact data for comparisons that need complete text, including command-result histories. */
 	public static String formatFullEvidence(String name, Object value) {
 		boolean previous = COMPACT.get();
 		COMPACT.set(false);

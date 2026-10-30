@@ -121,8 +121,8 @@ public class ClassRegistryFromTraceTest {
 		GenericTracesFileProcessor processor =
 				newTraceFilesProcessor(
 						traces,
-						new BridgeDemoTraceFilesProcessor()
-								.bridgeDemoExpectedInputs());
+						new BridgeDemoTraceInformation()
+								.expectedInputs());
 		List<TraceFilesProcessorError> errors =
 				processor.generateClassRegistry(
 						DEFAULT_CLASS_REGISTRY_FILE);
@@ -543,9 +543,9 @@ public class ClassRegistryFromTraceTest {
 					"",
 					StandardCharsets.UTF_8);
 		}
-		BridgeDemoTraceFilesProcessor processor =
-				new BridgeDemoTraceFilesProcessor();
-		processor.setTraceDirectory(traceDirectory.toString());
+		BridgeDemoTraceInformation information = new BridgeDemoTraceInformation(traceDirectory);
+		TraceFilesProcessor processor = new NativeTraceFilesProcessor(
+				information.traceFiles(), information.expectedInputs());
 		TraceCheckResult result =
 				processor.checkTraceFilesExist();
 		if (result.errors().contains(

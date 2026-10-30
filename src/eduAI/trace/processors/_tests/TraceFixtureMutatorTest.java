@@ -32,6 +32,18 @@ public class TraceFixtureMutatorTest {
 						StandardCharsets.UTF_8);
 			}
 
+			if (!new TraceFixtureMutator().presentEventNames(source)
+					.equals(java.util.Set.of("request_sent", "response_translated"))) {
+				throw new AssertionError("Event discovery must reflect the dataset, not the shared A1/A2 catalog");
+			}
+			try {
+				new TraceFixtureMutator().createBrokenDataset(source, root.resolve("absent"),
+						List.of(Mutation.removeEvent("cli_command_displayed")));
+				throw new AssertionError("An explicitly requested no-op mutation must still fail");
+			} catch (IOException expected) {
+				if (!expected.getMessage().contains("Mutation changed no trace lines")) throw expected;
+			}
+
 			Mutation wrongContext = Mutation.wrongFieldValue(
 					"request_sent",
 					"context").inFile(

@@ -3,23 +3,21 @@ package eduAI.trace.processors.mutations;
 import eduAI.trace.processors.*;
 
 import java.nio.file.Path;
+import static eduAI.trace.processors.mutations.TraceMutationAssertions.*;
 import java.util.List;
 
 public class ExpectedPromptMissingBridgeDemoTraceFilesProcessor {
 	private static final String MISSING_PROMPT =
 			"Expected prompt missing from provider request";
 
-	private final BridgeDemoTraceFilesProcessorDelegate delegate;
+	private final TraceFilesProcessor processor;
 
 	public ExpectedPromptMissingBridgeDemoTraceFilesProcessor() {
+		BridgeDemoTraceInformation information = new BridgeDemoTraceInformation(
+				Path.of("broken_filtered", "expected_prompt_missing"));
 		GenericTracesFileProcessor.ExpectedInputs expectedInputs =
-				new BridgeDemoTraceFilesProcessorDelegate()
-						.bridgeDemoExpectedInputs();
-		delegate =
-				new BridgeDemoTraceFilesProcessorDelegate(
-						Path.of(
-								"broken_filtered",
-								"expected_prompt_missing"),
+				information.expectedInputs();
+		processor = new NativeTraceFilesProcessor(information.traceFiles(),
 						new GenericTracesFileProcessor.ExpectedInputs(
 								expectedInputs.systemPromptTexts(),
 								List.of(
@@ -29,15 +27,17 @@ public class ExpectedPromptMissingBridgeDemoTraceFilesProcessor {
 										expectedInputs.userPromptTexts().get(3)),
 								expectedInputs.compactionPromptTexts(),
 								expectedInputs.expectedImageBytes()));
+        processor.setExpectedContentChecks(new eduAI.trace.processors.assignment1.BridgeDemoContentChecks((GenericTracesFileProcessor) processor));
 	}
 
 	public void runBrokenTraceAndVerify() {
-		delegate.runAndVerify(getClass().getSimpleName(), this::verify);
+		processor.processTraceFiles();
+		verify(processor.checkExpectedPrompts());
+		System.out.println(getClass().getSimpleName() + " detected expected trace break");
 	}
 
-	private void verify(BridgeDemoTraceFilesProcessorDelegate.TraceRun aRun) {
-		delegate.assertCheckerMessage(
-				aRun,
+	private void verify(TraceCheckResult aRun) {
+		assertCheckerMessage(aRun.level3Messages(),
 				GenericTracesFileProcessor.EXPECTED_PROMPT_IN_CONTEXT_WINDOW,
 				"provider=Ollama",
 				"mode=NON_STREAMING",

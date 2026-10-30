@@ -14,6 +14,13 @@ import eduAI.trace.TraceLine;
 import eduAI.trace.TraceLineParser;
 
 public class TraceFixtureFilter {
+	private final List<String> traceFileNames;
+
+	public TraceFixtureFilter() { this(TRACE_FILE_NAMES); }
+
+	public TraceFixtureFilter(List<String> traceFileNames) {
+		this.traceFileNames = List.copyOf(traceFileNames);
+	}
 	public static final Path DEFAULT_SOURCE = Path.of(".");
 	public static final Path DEFAULT_TARGET =
 			Path.of("correct_filtered");
@@ -65,7 +72,7 @@ public class TraceFixtureFilter {
 			Set<String> essentialEvents,
 			MutableSummary summary) throws IOException {
 		Files.createDirectories(aTargetDirectory);
-		for (String fileName : TRACE_FILE_NAMES) {
+		for (String fileName : traceFileNames) {
 			Path source = aSourceDirectory.resolve(fileName);
 			if (!Files.isRegularFile(source)) {
 				throw new IOException("Required trace file is missing: " + source);
@@ -98,7 +105,7 @@ public class TraceFixtureFilter {
 		if (!Files.exists(aRoot)) {
 			throw new IOException("Filtered trace directory was not created: " + aRoot);
 		}
-		for (String fileName : TRACE_FILE_NAMES) {
+		for (String fileName : traceFileNames) {
 			Path path = aRoot.resolve(fileName);
 			if (!Files.isRegularFile(path)) {
 				throw new IOException("Filtered trace file is missing: " + path);

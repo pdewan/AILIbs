@@ -1,6 +1,7 @@
 package eduAI.trace.processors;
 
 public enum TraceFilesProcessorError {
+	MISSING_TRACE_FILE,
 	MISSING_NON_STREAMING_TRACE_FILE,
 	MISSING_STREAMING_TRACE_FILE,
 	UNREADABLE_TRACE_FILE,

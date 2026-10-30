@@ -2,15 +2,17 @@ package eduAI.trace.processors._tests;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import eduAI.trace.processors.BridgeDemoTraceFilesProcessorDelegate;
+import eduAI.trace.processors.*;
 
 public final class TraceDirectorySearchTest {
 	private static final String GEMINI = "TraceGeminiBridgeStreamingDemo.txt";
 	private static final String OLLAMA = "TraceOllamaStreamingBridgeDemo.txt";
 	public static void main(String[] args) throws Exception {
 		if (args.length > 0 && args[0].equals("--image-cwd")) {
-			var processor = new BridgeDemoTraceFilesProcessorDelegate();
-			require(java.util.Arrays.equals(processor.bridgeDemoExpectedInputs().expectedImageBytes(),
+			var information = new BridgeDemoTraceInformation();
+			var processor = new NativeTraceFilesProcessor(information.traceFiles(), information.expectedInputs());
+                processor.setExpectedContentChecks(new eduAI.trace.processors.assignment1.BridgeDemoContentChecks((GenericTracesFileProcessor) processor));
+			require(java.util.Arrays.equals(information.expectedInputs().expectedImageBytes(),
 					Files.readAllBytes(Path.of(args[1]))), "reference image bytes differ");
 			processor.processTraceFiles();
 			boolean expectedPass = args.length < 3 || !args[2].equals("--expect-failure");
@@ -20,9 +22,11 @@ public final class TraceDirectorySearchTest {
 			return;
 		}
 		if (args.length > 0 && args[0].equals("--cwd")) {
-			var processor = new BridgeDemoTraceFilesProcessorDelegate();
+			var information = new BridgeDemoTraceInformation();
+			var processor = new NativeTraceFilesProcessor(information.traceFiles(), information.expectedInputs());
+                processor.setExpectedContentChecks(new eduAI.trace.processors.assignment1.BridgeDemoContentChecks((GenericTracesFileProcessor) processor));
 			require(processor.checkTraceFilesExist().passed(), "default current-directory lookup failed");
-			System.out.println("Current-directory lookup passed: " + processor.bridgeDemoTraceFiles());
+			System.out.println("Current-directory lookup passed: " + information.traceFiles());
 			return;
 		}
 		Path root = Files.createTempDirectory("trace-directory-search-");
@@ -30,7 +34,7 @@ public final class TraceDirectorySearchTest {
 		write(local.resolve(GEMINI));
 		write(local.resolve("educopliot/" + GEMINI));
 		write(local.resolve("educopliot/" + OLLAMA));
-		var processor = new BridgeDemoTraceFilesProcessorDelegate(local);
+		var processor = new BridgeDemoTraceInformation(local);
 		require(processor.traceFile(GEMINI).equals(local.resolve(GEMINI)), "local file must win");
 		require(processor.traceFile(OLLAMA).equals(local.resolve("educopliot/" + OLLAMA)), "missing local file must search descendants");
 
@@ -40,7 +44,7 @@ public final class TraceDirectorySearchTest {
 		write(nested.resolve("src/project/" + GEMINI));
 		write(nested.resolve("BIN/project/" + GEMINI));
 		write(nested.resolve("outer/educopliot/logs/" + GEMINI));
-		processor.setTraceDirectory(nested.toString());
+		processor = new BridgeDemoTraceInformation(nested);
 		require(processor.traceFile(GEMINI).equals(nested.resolve("outer/educopliot/logs/" + GEMINI)), "recursive search must prune src and bin");
 		write(nested.resolve("outer/educopliot/logs/TraceOllamaBridgeStreamingDemo.txt.gz"));
 		require(processor.traceFile(OLLAMA).equals(nested.resolve("outer/educopliot/logs/TraceOllamaBridgeStreamingDemo.txt.gz")), "preferred compressed alias must work recursively");
@@ -48,16 +52,16 @@ public final class TraceDirectorySearchTest {
 		Path excluded = root.resolve("excluded");
 		write(excluded.resolve("src/" + GEMINI));
 		write(excluded.resolve("bin/child/" + GEMINI));
-		processor.setTraceDirectory(excluded.toString());
+		processor = new BridgeDemoTraceInformation(excluded);
 		require(processor.traceFile(GEMINI).equals(excluded.resolve(GEMINI)), "excluded files must remain missing");
-		require(!processor.checkTraceFilesExist().passed(), "missing files must still fail");
+		require(!new NativeTraceFilesProcessor(processor.traceFiles(), processor.expectedInputs()).checkTraceFilesExist().passed(), "missing files must still fail");
 
 		Path project = root.resolve("project");
 		Path bin = project.resolve("BiN");
 		write(bin.resolve(GEMINI));
 		write(project.resolve(GEMINI));
 		write(project.resolve(OLLAMA));
-		processor.setTraceDirectory(bin.toString());
+		processor = new BridgeDemoTraceInformation(bin);
 		require(processor.traceFile(GEMINI).equals(bin.resolve(GEMINI)), "bin-local file must win over parent");
 		require(processor.traceFile(OLLAMA).equals(project.resolve(OLLAMA)), "missing bin-local file must search parent");
 		String nonStreaming = "TraceGeminiBridgeNonStreamingDemo.txt";
@@ -69,7 +73,7 @@ public final class TraceDirectorySearchTest {
 		Path ambiguous = root.resolve("ambiguous");
 		write(ambiguous.resolve("one/" + GEMINI));
 		write(ambiguous.resolve("two/" + GEMINI));
-		try { processor.setTraceDirectory(ambiguous.toString()); throw new AssertionError("ambiguous matches accepted"); }
+		try { new BridgeDemoTraceInformation(ambiguous).traceFiles(); throw new AssertionError("ambiguous matches accepted"); }
 		catch (IllegalArgumentException expected) {
 			require(expected.getMessage().contains("Multiple trace directories"), "ambiguity should be explained");
 		}

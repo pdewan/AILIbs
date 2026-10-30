@@ -21,6 +21,25 @@ import eduAI.trace.TraceMessageRole;
 import eduAI.trace.lib.StreamingMode;
 
 public class GenericTracesFileProcessor implements TraceFilesProcessor {
+    private java.util.Optional<java.util.Set<String>> selectedTraceLines = java.util.Optional.empty();
+    private Map<String, TraceRecordId> selectedTraceIds = Map.of();
+    private static String location(Path file, int line) { return file.toAbsolutePath().normalize()+":"+line; }
+    /** Reprocess an explicit evidence subset with the same configured interpreters.
+     * No global result/cache is reused; omitted lines cannot contribute errors. */
+    public void processSelectedTraceLines(Collection<TraceRecord> records) {
+        selectedTraceIds = records.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+            r -> location(Path.of(r.getTraceFileName()), r.getTraceFileLineNumber()), TraceRecord::getId));
+        selectedTraceLines = java.util.Optional.of(records.stream().map(r -> location(Path.of(r.getTraceFileName()),r.getTraceFileLineNumber()))
+            .collect(java.util.stream.Collectors.toUnmodifiableSet()));
+        processTraceFiles();
+    }
+    public boolean isEvidenceSelection() { return selectedTraceLines.isPresent(); }
+    public List<String> classesForEvents(Set<String> events) {
+        ensureTraceFilesProcessedForClassRegistry();
+        return classTagDerivations.values().stream().flatMap(Collection::stream)
+            .filter(d -> events.contains(d.traceEvent())).map(ClassTagDerivation::className).distinct().toList();
+    }
+	public static final String CLI_COMMAND_DISPATCHER_TAG = "CLICommandDispatcher";
 	public static final String PREVIOUS_COMPLETED_RESPONSE_IN_CONTEXT_WINDOW =
 			"previous_completed_response_in_context_window";
 	public static final String PREVIOUS_SYSTEM_PROMPT_IN_CONTEXT_WINDOW =
@@ -136,6 +155,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			new LinkedHashMap<>();
 	private final List<ProviderTraceInterpreter> providerTraceInterpreters =
 			new ArrayList<>();
+	private final Map<String, ProviderTraceInterpreter> identityInterpreters = new LinkedHashMap<>();
 	private final Map<String, ProviderParameterChecker>
 			providerParameterCheckers = new LinkedHashMap<>();
 	private final ProviderSpecificTypeRegistry providerSpecificTypeRegistry =
@@ -171,7 +191,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			new ArrayList<>();
 	private final List<Boolean> responseMatchResults = new ArrayList<>();
 	private final List<Boolean> metadataMatchResults = new ArrayList<>();
-	private final List<Boolean> expectedInputMatchResults =
+	final List<Boolean> expectedInputMatchResults =
 			new ArrayList<>();
 	private final List<Boolean> streamingChunkContextWindowMatchResults =
 			new ArrayList<>();
@@ -187,7 +207,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			new LinkedHashMap<>();
 	private final EnumSet<TraceFilesProcessorError> errors =
 			EnumSet.noneOf(TraceFilesProcessorError.class);
-	private final ExpectedInputs expectedInputs;
+	final ExpectedInputs expectedInputs;
 	private boolean falseCheckMessagesAreWarnings = true;
 	private boolean falseCheckMessagesAreErrors = true;
 	private boolean uncheckedCheckMessagesAreWarnings = true;
@@ -205,6 +225,32 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			new LinkedHashMap<>();
 	private TraceRecord currentResponseTranslationRecord;
 	private boolean traceFilesProcessed;
+	private Path sessionTraceFile;
+    private ExpectedContentChecks expectedContentChecks;
+    private final Map<String, String> inputTextEquivalences = new LinkedHashMap<>();
+
+    public void setExpectedContentChecks(ExpectedContentChecks checks) {
+        expectedContentChecks = java.util.Objects.requireNonNull(checks);
+    }
+    public void registerInputTextEquivalence(String canonical, String alternative) {
+        inputTextEquivalences.put(java.util.Objects.requireNonNull(alternative), java.util.Objects.requireNonNull(canonical));
+    }
+    private TraceCheckResult checkExpectedContent(String provider, StreamingMode mode, ExpectedContentChecks.Kind kind) {
+        if (expectedContentChecks == null) throw new IllegalStateException("Expected-content checks must be configured explicitly");
+        ensureTraceFilesProcessedForClassRegistry();
+        return expectedContentChecks.check(this, provider, mode, kind);
+    }
+    public TraceCheckResult checkExpectedRequestSettings() { return checkExpectedContent(null, null, ExpectedContentChecks.Kind.SETTINGS); }
+    public TraceCheckResult checkExpectedInputs() { return checkExpectedContent(null, null, ExpectedContentChecks.Kind.ALL); }
+    public TraceCheckResult checkExpectedInputs(String provider, StreamingMode mode) { return checkExpectedContent(provider, mode, ExpectedContentChecks.Kind.ALL); }
+    public TraceCheckResult checkExpectedPrompts() { return checkExpectedPrompts(null); }
+    public TraceCheckResult checkExpectedPrompts(String provider) { return checkExpectedContent(provider, null, ExpectedContentChecks.Kind.PROMPTS); }
+    public TraceCheckResult checkExpectedGenericImagesMatch() { return checkExpectedGenericImagesMatch(null); }
+    public TraceCheckResult checkExpectedGenericImagesMatch(String provider) { return checkExpectedContent(provider, null, ExpectedContentChecks.Kind.IMAGES); }
+	private static final Set<String> REQUEST_PREPARATION_EVENTS = Set.of(
+			"server_handle_factory_fetched", "server_handle_fetched",
+			"message_translated", "parameter_translated", "request_sent");
+	private record SessionPartition(String provider, boolean streaming) { }
 
 	public record TraceFiles(
 			Path streamingTraceFile,
@@ -271,7 +317,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			String detail) {
 	}
 
-	private record ImageComparison(
+	record ImageComparison(
 			boolean matches,
 			TraceRecord traceRecord,
 			ImageByteSummary expected,
@@ -425,11 +471,25 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		}
 	}
 
+	/** A single chronological session may switch providers and streaming modes. */
+	protected GenericTracesFileProcessor(Path aSessionTraceFile, ExpectedInputs inputs) {
+		this(Map.of(), inputs);
+		sessionTraceFile = java.util.Objects.requireNonNull(aSessionTraceFile);
+	}
+
 	public void registerProviderTraceInterpreter(
 			ProviderTraceInterpreter anInterpreter) {
 		if (anInterpreter != null) {
 			providerTraceInterpreters.add(anInterpreter);
 		}
+	}
+
+	/** Explicit association used to identify native request evidence in session files. */
+	public void registerProviderTraceInterpreter(String provider, ProviderTraceInterpreter interpreter) {
+		if (provider == null || provider.isBlank()) throw new IllegalArgumentException("Provider is required");
+		java.util.Objects.requireNonNull(interpreter, "Provider interpreter is required");
+		identityInterpreters.put(TraceProviderNames.canonical(provider), interpreter);
+		registerProviderTraceInterpreter(interpreter);
 	}
 
 	@Override
@@ -491,6 +551,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 
 	public void processTraceFiles(
 			Map<String, TraceFiles> aProviderTraceFiles) {
+		sessionTraceFile = null;
 		providerTraceFiles.clear();
 		providerTraceFiles.putAll(aProviderTraceFiles);
 		processTraceFiles();
@@ -511,10 +572,18 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	public void processTraceFiles() {
 		initializeTraceProcessing();
 		checkTraceFilesExist();
+		if (sessionTraceFile != null) {
+			currentProvider = "";
+			processTraceFile(sessionTraceFile, false);
+			traceFilesProcessed = true;
+			checkExpectedClassTags();
+			return;
+		}
 		for (Map.Entry<String, TraceFiles> entry :
 				providerTraceFiles.entrySet()) {
 			currentProvider = entry.getKey();
 			processNonStreamingTrace(entry.getValue());
+			currentProvider = entry.getKey();
 			processStreamingTrace(entry.getValue());
 		}
 		traceFilesProcessed = true;
@@ -522,6 +591,9 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	}
 
 	public TraceCheckResult checkTraceFilesExist() {
+		if (sessionTraceFile != null) {
+			return checkSessionTraceFile();
+		}
 		for (Map.Entry<String, TraceFiles> entry :
 				providerTraceFiles.entrySet()) {
 			currentProvider = entry.getKey();
@@ -533,11 +605,69 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return traceCheckResult(traceFileCheckReportLines());
 	}
 
+	private TraceCheckResult checkSessionTraceFile() {
+		if (Files.isRegularFile(sessionTraceFile) && Files.isReadable(sessionTraceFile)) {
+			return new TraceCheckResult(List.of(), List.of(INFO_MESSAGE_PREFIX
+					+ " trace file exists check=passed traceFile=" + sessionTraceFile), List.of());
+		}
+		TraceFilesProcessorError error = Files.exists(sessionTraceFile)
+				? TraceFilesProcessorError.UNREADABLE_TRACE_FILE : TraceFilesProcessorError.MISSING_TRACE_FILE;
+		recordError(error);
+		String message = ERROR_MESSAGE_PREFIX + " trace file exists check=failed error="
+				+ error + " traceFile=" + sessionTraceFile;
+		return new TraceCheckResult(List.of(error), List.of(message), List.of(message));
+	}
+
 	public TraceCheckResult checkProviderNamesConsistent() {
 		ensureTraceFilesProcessedForClassRegistry();
-		return processorErrorCheckResult(
+        var consistency = processorErrorCheckResult(
 				TraceFilesProcessorError.INCONSISTENT_PROVIDER_NAME,
 				"provider names consistent");
+        var errors = new ArrayList<>(consistency.level3ErrorMessages());
+        var observed = new LinkedHashMap<String, Set<String>>();
+        int factories = 0;
+        for (var record : traceRecords.values()) {
+            String event = record.getTraceLine().getEventName();
+            var data = record.getTraceLine().getAuxiliaryData();
+            if (eduAI.trace.lib.LibTraceEvent.SERVER_HANDLE_FACTORY_FETCHED.name().toLowerCase(java.util.Locale.ROOT).equals(event)) {
+                factories++;
+                String provider = TraceProviderNames.canonical(data.get(ProviderIdentityFields.PROVIDER));
+                // Registry/class dumps belong to the independent full factory
+                // integrity check. Only the lookup key and factory identity bind
+                // subsequent requests to a provider.
+                if (isBlank(provider) || !provider.equals(record.getId().provider())
+                        || !identityMatchesDump(data, ProviderIdentityFields.FACTORY_IDENTITY, ProviderIdentityFields.FACTORY)) {
+                    errors.add("Missing or inconsistent provider/factory identity at " + traceLineLocation(record));
+                } else observed.computeIfAbsent(record.getTraceFileName(), key -> new LinkedHashSet<>()).add(provider);
+            }
+            if (eduAI.trace.lib.LibTraceEvent.REQUEST_SENT.name().toLowerCase(java.util.Locale.ROOT).equals(event)
+                    && !observed.getOrDefault(record.getTraceFileName(), Set.of()).contains(record.getId().provider()))
+                errors.add("No preceding provider/factory identity evidence for request at " + traceLineLocation(record));
+            // A1 has an independently configured provider per file. In a combined
+            // session, the lookup key alone cannot establish its own correctness.
+            // Inspect only this request's native structures, not student class
+            // names, model names, parameter correctness or another request.
+            if (sessionTraceFile != null && eduAI.trace.lib.LibTraceEvent.REQUEST_SENT.name()
+                    .toLowerCase(java.util.Locale.ROOT).equals(event)) {
+                var nativeProviders = new LinkedHashSet<String>();
+                for (var entry : identityInterpreters.entrySet()) {
+                    var interpreter = entry.getValue();
+                    if (interpreter.canInterpretProviderContextWindow(data.get(RequestTraceFields.NATIVE_CONTEXT))
+                            || interpreter.canInterpretProviderConfiguration(data.get(RequestTraceFields.NATIVE_PARAMETERS))) {
+                        nativeProviders.add(entry.getKey());
+                    }
+                }
+                if (!nativeProviders.equals(Set.of(record.getId().provider()))) {
+                    errors.add("Request native provider evidence " + nativeProviders
+                            + " does not uniquely match declared provider " + record.getId().provider()
+                            + " at " + traceLineLocation(record));
+                }
+            }
+        }
+        if (factories == 0) errors.add("No provider/factory identity evidence");
+        var messages = new ArrayList<>(consistency.level3Messages());
+        messages.addAll(errors);
+        return new TraceCheckResult(consistency.errors(), messages, errors);
 	}
 
 	public TraceCheckResult checkRequestsTraced() {
@@ -554,11 +684,12 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		List<String> messages = new ArrayList<>();
 		for (Map.Entry<String, List<StreamingMode>> entry :
 				expectedProviderModes.entrySet()) {
-			for (StreamingMode mode : entry.getValue()) {
+			boolean sessionFactory = sessionTraceFile != null && anEventName.endsWith("factory_fetched");
+			for (StreamingMode mode : sessionFactory ? entry.getValue().subList(0, 1) : entry.getValue()) {
 				List<TraceRecord> matchingRecords = traceRecords.values().stream()
 						.filter(record -> entry.getKey().equals(
 								record.getId().provider()))
-						.filter(record -> mode == record.getId().mode())
+						.filter(record -> sessionFactory || mode == record.getId().mode())
 						.filter(record -> anEventName.equals(
 								record.getTraceLine().getEventName()))
 						.toList();
@@ -580,7 +711,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 						+ (passed ? "passed" : "failed")
 						+ " event=" + anEventName
 						+ " provider=" + entry.getKey()
-						+ " mode=" + mode
+						+ " mode=" + (sessionFactory ? "SESSION" : mode)
 						+ " count=" + evidence.size()
 						+ " evidence=" + evidence
 						+ " invalidEvidence=" + invalidEvidence);
@@ -659,11 +790,9 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		case "provider_streaming_chunk_received" ->
 				classMatchesDump(data, "providerStreamingChunkClass",
 						"providerStreamingChunk");
-		case "request_sent" -> aRecord.getId().mode().name().equals(data.get("mode"))
-				&& required(data, "providerIndependentParameterStore",
-						"providerIndependentContextWindow",
-						"providerDependentConfiguration",
-						"providerDependentContextWindow");
+		case "request_sent" -> aRecord.getId().mode().name().equals(data.get(RequestTraceFields.MODE))
+				&& required(data, RequestTraceFields.GENERIC_PARAMETERS, RequestTraceFields.GENERIC_CONTEXT,
+                    RequestTraceFields.NATIVE_PARAMETERS, RequestTraceFields.NATIVE_CONTEXT);
 		default -> true;
 		};
 	}
@@ -697,9 +826,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			String aDumpField) {
 		String identity = data.get(anIdentityField);
 		String dump = data.get(aDumpField);
-		return !isBlank(identity) && dump != null
-				&& (dump.contains("identity=\"" + identity + "\"")
-						|| dump.contains("toString=\"" + identity + "\""));
+		return ProviderIdentityFields.dumpContainsIdentity(dump, identity);
 	}
 
 	public void processTraceFile(
@@ -731,7 +858,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return List.copyOf(errors);
 	}
 
-	private TraceCheckResult traceCheckResult(List<String> aLevel3Messages) {
+	TraceCheckResult traceCheckResult(List<String> aLevel3Messages) {
 		ArrayList<String> level3ErrorMessages = new ArrayList<>();
 		ArrayList<TraceFilesProcessorError> level3Errors =
 				new ArrayList<>();
@@ -760,17 +887,17 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				level3ErrorMessages);
 	}
 
-	private TraceCheckResult checkerResult(String aCheckName) {
+	TraceCheckResult checkerResult(String aCheckName) {
 		return checkerResult(aCheckName, null, null);
 	}
 
-	private TraceCheckResult checkerResultForProvider(
+	TraceCheckResult checkerResultForProvider(
 			String aCheckName,
 			String aProvider) {
 		return checkerResult(aCheckName, "provider", aProvider);
 	}
 
-	private TraceCheckResult checkerResult(
+	TraceCheckResult checkerResult(
 			String aCheckName,
 			String aFieldName,
 			String aFieldValue) {
@@ -829,7 +956,6 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		checkStreamingChunksReflectedInNextContextWindow();
 		checkStreamingCallbacksInvoked();
 		checkProviderIndependentNonStreamingDataMatchesAcrossProviders();
-		checkExpectedInputs();
 		writeClassRegistry(aClassRegistryFile);
 		return List.copyOf(errors);
 	}
@@ -913,7 +1039,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	}
 
 	private void ensureTraceFilesProcessedForClassRegistry() {
-		if (!traceFilesProcessed && !providerTraceFiles.isEmpty()) {
+		if (!traceFilesProcessed && (sessionTraceFile != null || !providerTraceFiles.isEmpty())) {
 			processTraceFiles();
 		}
 	}
@@ -1074,7 +1200,6 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	private void processTraceFile(
 			Path aTraceFile,
 			boolean isStreaming) {
-		currentProvider = "";
 		currentStats = new TraceFileStats();
 		pendingTranslatedParameters.clear();
 		pendingParameterEvidence.clear();
@@ -1083,6 +1208,8 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		List<ParsedTraceLine> lines;
 		try {
 			lines = parsedTraceLines(aTraceFile);
+			if (selectedTraceLines.isPresent()) lines = lines.stream()
+				.filter(line -> selectedTraceLines.orElseThrow().contains(location(aTraceFile,line.traceFileLineNumber()))).toList();
 		} catch (IOException e) {
 			recordError(TraceFilesProcessorError.UNREADABLE_TRACE_FILE);
 			return;
@@ -1092,10 +1219,27 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				? isStreaming
 				: inferredMode == StreamingMode.STREAMING;
 		installHandlers(true);
+		StreamingMode[] upcomingModes = sessionTraceFile == null ? null : upcomingRequestModes(lines);
+		Map<SessionPartition, TraceFileStats> sessionStats = new LinkedHashMap<>();
 		int sequenceNumber = 0;
 		for (ParsedTraceLine parsedTraceLine : lines) {
 			TraceLine traceLine = parsedTraceLine.traceLine();
+			if (sessionTraceFile != null) {
+				adoptSessionContext(traceLine, upcomingModes[sequenceNumber]);
+			}
 			adoptProviderFromAuthoritativeTrace(traceLine);
+            // A sparse evidence view preserves the original partition. Its setup
+            // events may lie outside the selected response interval.
+            if (selectedTraceLines.isPresent()) {
+                var original = java.util.Objects.requireNonNull(selectedTraceIds.get(
+                    location(aTraceFile, parsedTraceLine.traceFileLineNumber())));
+                currentProvider = original.provider();
+                currentTraceIsStreaming = original.mode() == StreamingMode.STREAMING;
+            }
+			if (sessionTraceFile != null) {
+				currentStats = sessionStats.computeIfAbsent(
+						new SessionPartition(currentProvider, currentTraceIsStreaming), key -> new TraceFileStats());
+			}
 			TraceRecord record =
 					new TraceRecord(
 							new TraceRecordId(
@@ -1112,7 +1256,47 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				handler.handle(record);
 			}
 		}
-		recordMissingTraceErrors();
+		if (sessionTraceFile == null) {
+			recordMissingTraceErrors();
+		} else {
+			for (var entry : sessionStats.entrySet()) {
+				currentProvider = entry.getKey().provider();
+				currentTraceIsStreaming = entry.getKey().streaming();
+				currentStats = entry.getValue();
+				if (currentStats.requestSent) recordMissingTraceErrors();
+			}
+			if (sessionStats.values().stream().noneMatch(stats -> stats.requestSent)) {
+				recordError(TraceFilesProcessorError.MISSING_REQUEST_SENT);
+			}
+		}
+	}
+
+	private StreamingMode[] upcomingRequestModes(List<ParsedTraceLine> lines) {
+		StreamingMode[] result = new StreamingMode[lines.size()];
+		StreamingMode nextMode = null;
+		for (int index = lines.size() - 1; index >= 0; index--) {
+			TraceLine line = lines.get(index).traceLine();
+			if ("request_sent".equals(line.getEventName())) {
+				String mode = line.getAuxiliaryData().get("mode");
+				nextMode = StreamingMode.STREAMING.name().equals(mode) ? StreamingMode.STREAMING
+						: StreamingMode.NON_STREAMING.name().equals(mode) ? StreamingMode.NON_STREAMING : null;
+			}
+			result[index] = nextMode;
+		}
+		return result;
+	}
+
+	private void adoptSessionContext(TraceLine line, StreamingMode upcomingMode) {
+		String event = line.getEventName();
+		if ("server_handle_fetched".equals(event)) {
+			String provider = providersByServerHandleFactoryIdentity.get(
+					line.getAuxiliaryData().get("serverHandleFactoryIdentity"));
+			if (!isBlank(provider)) currentProvider = provider;
+		}
+		// Translation/setup events precede the request whose mode they belong to.
+		if (REQUEST_PREPARATION_EVENTS.contains(event) && upcomingMode != null) {
+			currentTraceIsStreaming = upcomingMode == StreamingMode.STREAMING;
+		}
 	}
 
 	private StreamingMode modeFromRequestSent(
@@ -1270,8 +1454,105 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return result;
 	}
 
-	private void installHandlers(boolean isStreaming) {
+	private void handleCommandHandlerFetched(TraceRecord record) {
+		add(record.getTraceLine().getSourceClassName(), CLI_COMMAND_DISPATCHER_TAG,
+				record, "sourceClass", "dispatcher fetched a command handler from the registry");
+		var data = record.getTraceLine().getAuxiliaryData();
+		String registryField = eduAI.trace.cli.CLITraceActions.REGISTRY;
+		add(rootClassNameInReflectiveDump(data.get(registryField)),
+				eduAI.trace.processors.cli.CLICommandHandlerChecks.REGISTRY_TAG,
+				record, registryField, "registry supplied the command handler");
+	}
+
+	private void handleCommandHandlerResults(TraceRecord record) {
+		var data = record.getTraceLine().getAuxiliaryData();
+		String tag = eduAI.trace.processors.cli.CLICommandHandlerChecks.COMMAND_TAGS.get(
+				data.getOrDefault(eduAI.trace.cli.CLITraceActions.COMMAND_NAME, ""));
+		if (eduAI.trace.processors.cli.CLICommandNames.EXIT.equals(data.get(eduAI.trace.cli.CLITraceActions.COMMAND_NAME))) tag = eduAI.trace.processors.cli.CLIArchitectureChecks.EXIT_HANDLER_TAG;
+        String handlerField = eduAI.trace.cli.CLITraceActions.HANDLER;
+		if (tag != null) {
+			add(rootClassNameInReflectiveDump(data.get(handlerField)), tag,
+					record, handlerField, "handler returned the command result to the dispatcher");
+		}
+	}
+
+
+	private void handleCLIPropertyHandlerFetched(TraceRecord record) {
+		var data = record.getTraceLine().getAuxiliaryData();
+		String field = eduAI.trace.cli.CLITraceActions.PROPERTY_HANDLER;
+		String handlerClass = rootClassNameInReflectiveDump(data.get(field));
+        add(rootClassNameInReflectiveDump(data.get(eduAI.trace.cli.CLITraceActions.PROPERTY_REGISTRY)),
+            eduAI.trace.processors.cli.CLIArchitectureChecks.PROPERTY_REGISTRY_TAG, record, eduAI.trace.cli.CLITraceActions.PROPERTY_REGISTRY, "registry supplies property metadata");
+		add(handlerClass, eduAI.trace.processors.cli.CLIPropertyHandlerTags.HANDLER_TAG,
+				record, field, "property handler fetched for CLI property processing");
+		String tag = eduAI.trace.processors.cli.CLIPropertyHandlerTags.PROPERTY_TAGS.get(
+				data.getOrDefault(eduAI.trace.cli.CLITraceActions.PROPERTY_NAME, ""));
+		if (tag != null) add(handlerClass, tag, record, field, "handler fetched for the named property");
+	}
+
+	private void handleArchitectureRole(TraceRecord record) {
+        var d = record.getTraceLine().getAuxiliaryData();
+        String event = record.getTraceLine().getEventName();
+        String field, tag;
+        if (event.equals(eduAI.trace.cli.CLIArchitectureTrace.Event.CLI_FILE_EXPANDED.eventName())) {
+            field = eduAI.trace.cli.CLIArchitectureTrace.EXPANDER;
+            tag = eduAI.trace.cli.CLIArchitectureTrace.IMAGE.equals(d.get(eduAI.trace.cli.CLIArchitectureTrace.KIND)) ? eduAI.trace.processors.cli.CLIArchitectureChecks.IMAGE_EXPANDER_TAG : eduAI.trace.processors.cli.CLIArchitectureChecks.TEXT_EXPANDER_TAG;
+        } else {
+            field = eduAI.trace.cli.CLIArchitectureTrace.OBSERVER;
+            tag = event.equals(eduAI.trace.cli.CLIArchitectureTrace.Event.CLI_COMMAND_DISPLAYED.eventName()) ? eduAI.trace.processors.cli.CLIArchitectureChecks.COMMAND_OBSERVER_TAG : eduAI.trace.processors.cli.CLIArchitectureChecks.STREAM_OBSERVER_TAG;
+        }
+        String identity = d.get(field);
+        if (identity != null && identity.contains("@")) add(identity.substring(0, identity.lastIndexOf('@')), tag, record, field, "participant completed the traced operation");
+    }
+
+    private void handleSixCallRole(TraceRecord record) {
+        var d = record.getTraceLine().getAuxiliaryData();
+        var event = eduAI.trace.cli.MinimalCLITrace.Event.valueOf(record.getTraceLine().getEventName().toUpperCase(java.util.Locale.ROOT));
+        String name = d.get(eduAI.trace.cli.MinimalCLITrace.NAME);
+        if (event == eduAI.trace.cli.MinimalCLITrace.Event.COMMAND_HANDLED) {
+            add(record.getTraceLine().getSourceClassName(), CLI_COMMAND_DISPATCHER_TAG, record, "sourceClass", "dispatcher received result");
+            addSixCallTag(record, eduAI.trace.cli.MinimalCLITrace.REGISTRY, eduAI.trace.processors.cli.CLICommandHandlerChecks.REGISTRY_TAG);
+            String tag = eduAI.trace.processors.cli.CLICommandHandlerChecks.COMMAND_TAGS.get(
+                java.util.Objects.toString(eduAI.trace.processors.cli.CLICommandNames.role(name), ""));
+            if (eduAI.trace.processors.cli.CLICommandNames.EXIT.equals(name)) tag = eduAI.trace.processors.cli.CLIArchitectureChecks.EXIT_HANDLER_TAG;
+            addSixCallTag(record, eduAI.trace.cli.MinimalCLITrace.HANDLER, tag);
+        } else if (event == eduAI.trace.cli.MinimalCLITrace.Event.PROPERTY_HANDLED) {
+            addSixCallTag(record, eduAI.trace.cli.MinimalCLITrace.REGISTRY, eduAI.trace.processors.cli.CLIArchitectureChecks.PROPERTY_REGISTRY_TAG);
+            addSixCallTag(record, eduAI.trace.cli.MinimalCLITrace.HANDLER, eduAI.trace.processors.cli.CLIPropertyHandlerTags.HANDLER_TAG);
+            addSixCallTag(record, eduAI.trace.cli.MinimalCLITrace.HANDLER, eduAI.trace.processors.cli.CLIPropertyHandlerTags.PROPERTY_TAGS.get(name));
+        } else if (event == eduAI.trace.cli.MinimalCLITrace.Event.COMMAND_DISPLAYED) {
+            addSixCallTag(record, eduAI.trace.cli.MinimalCLITrace.OBSERVER, eduAI.trace.processors.cli.CLIArchitectureChecks.COMMAND_OBSERVER_TAG);
+        } else if (event == eduAI.trace.cli.MinimalCLITrace.Event.STREAM_OUTPUT_NOTIFIED) {
+            addSixCallTag(record, eduAI.trace.cli.MinimalCLITrace.OBSERVABLE, eduAI.trace.processors.cli.CLIArchitectureChecks.STREAM_OBSERVABLE_TAG);
+        } else if (event == eduAI.trace.cli.MinimalCLITrace.Event.STREAM_DISPLAYED) {
+            addSixCallTag(record, eduAI.trace.cli.MinimalCLITrace.OBSERVER, eduAI.trace.processors.cli.CLIArchitectureChecks.STREAM_OBSERVER_TAG);
+        } else if (event == eduAI.trace.cli.MinimalCLITrace.Event.FILE_EXPANDED) {
+            boolean image = eduAI.trace.processors.cli.MinimalCLIContractChecks.values(d, eduAI.trace.cli.MinimalCLITrace.EXPANDED_DATA).stream()
+                .anyMatch(v -> v.startsWith("imageBytes("));
+            addSixCallTag(record, eduAI.trace.cli.MinimalCLITrace.EXPANDER, image ? eduAI.trace.processors.cli.CLIArchitectureChecks.IMAGE_EXPANDER_TAG
+                : eduAI.trace.processors.cli.CLIArchitectureChecks.TEXT_EXPANDER_TAG);
+        }
+    }
+
+    private void addSixCallTag(TraceRecord record, String field, String tag) {
+        String identity = record.getTraceLine().getAuxiliaryData().get(field);
+        if (tag != null && identity != null && identity.contains("@"))
+            add(identity.substring(0,identity.lastIndexOf('@')),tag,record,field,"participant in completed operation");
+    }
+
+    private void installHandlers(boolean isStreaming) {
 		handlers.clear();
+        for (var event : eduAI.trace.cli.MinimalCLITrace.Event.values())
+            handlers.put(event.eventName(), this::handleSixCallRole);
+        for (var event : java.util.List.of(eduAI.trace.cli.CLIArchitectureTrace.Event.CLI_FILE_EXPANDED,
+            eduAI.trace.cli.CLIArchitectureTrace.Event.CLI_COMMAND_DISPLAYED, eduAI.trace.cli.CLIArchitectureTrace.Event.CLI_STREAM_DISPLAYED))
+            handlers.put(event.eventName(), this::handleArchitectureRole);
+		handlers.put(eduAI.trace.cli.CLITraceActions.Event.PROPERTY_HANDLER_FETCHED.eventName(),
+				this::handleCLIPropertyHandlerFetched);
+		handlers.put(eduAI.trace.cli.CLITraceActions.Event.COMMAND_HANDLER_FETCHED.eventName(),
+				this::handleCommandHandlerFetched);
+		handlers.put(eduAI.trace.cli.CLITraceActions.Event.COMMAND_HANDLER_RESULTS.eventName(),
+				this::handleCommandHandlerResults);
 		handlers.put(
 				"server_handle_factory_fetched",
 				this::handleServerHandleFactory);
@@ -1646,7 +1927,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			TraceRecord aTraceRecord) {
 		attachAuxiliaryExtractedData(aTraceRecord);
 		aTraceRecord.putExtractedData(
-				"streamingChunkMessageStructure",
+				StreamingCallbackEvidence.CHUNK_MESSAGE_STRUCTURE,
 				firstCanonicalMessageFromArgument(aTraceRecord, "streamingChunk"));
 		aTraceRecord.putExtractedData(
 				"accumulatedMessageStructure",
@@ -1706,7 +1987,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			TraceRecord aTraceRecord) {
 		currentStats.partialResponseCallbackInvoked = true;
 		aTraceRecord.putExtractedData(
-				"callbackArgumentStructure",
+				StreamingCallbackEvidence.CALLBACK_ARGUMENT_STRUCTURE,
 				firstCanonicalMessageFromArgument(
 						aTraceRecord,
 						"callbackArgument"));
@@ -1717,7 +1998,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			TraceRecord aTraceRecord) {
 		currentStats.completeResponseCallbackInvoked = true;
 		aTraceRecord.putExtractedData(
-				"callbackArgumentStructure",
+				StreamingCallbackEvidence.CALLBACK_ARGUMENT_STRUCTURE,
 				firstCanonicalMessageFromArgument(
 						aTraceRecord,
 						"callbackArgument"));
@@ -1739,8 +2020,9 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		if (isBlank(provider)) {
 			return;
 		}
-		if (!isBlank(currentProvider) && !currentProvider.equals(provider)) {
+		if (sessionTraceFile == null && !isBlank(currentProvider) && !currentProvider.equals(provider)) {
 			recordError(TraceFilesProcessorError.INCONSISTENT_PROVIDER_NAME);
+			return; // Keep the explicitly configured file scope; do not relabel it from invalid evidence.
 		}
 		currentProvider = provider;
 	}
@@ -1762,7 +2044,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return currentProvider;
 	}
 
-	private List<String> providers() {
+	List<String> providers() {
 		LinkedHashSet<String> result = new LinkedHashSet<>();
 		for (TraceRecord record : traceRecords.values()) {
 			String provider = record.getId().provider();
@@ -1918,6 +2200,10 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	private void checkImageContinuity(
 			String aProvider,
 			StreamingMode aMode) {
+		if (sessionTraceFile != null) {
+			checkSessionContinuity(aProvider, aMode);
+			return;
+		}
 		TraceRecord previousRecord = null;
 		List<String> previousImages = List.of();
 		List<String> previousMessageKeys = List.of();
@@ -2308,9 +2594,13 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	public TraceCheckResult checkProviderGenericMetadataMatches(
 			String aProvider,
 			StreamingMode aMode) {
-		List<TraceRecord> metadataRecords =
-				records(aProvider, aMode, "metadata_translated");
-		for (TraceRecord record : metadataRecords) {
+		// Scope to a request and an exact native source snapshot. A later streaming
+		// chunk may update the same native object; its changed values are legitimate.
+		Map<List<String>, Map<String, java.util.Set<String>>> meanings = new LinkedHashMap<>();
+		for (TraceRecord record : records(aProvider, aMode)) {
+			String event = record.getTraceLine().getEventName();
+			if ("request_sent".equals(event)) meanings.clear();
+			if (!"metadata_translated".equals(event)) continue;
 			Map<String, String> data =
 					record.getTraceLine().getAuxiliaryData();
 			String propertyName = data.get("propertyName");
@@ -2319,6 +2609,16 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			String difference = providerMetadataDifference(
 							providerSource,
 							propertyValue);
+			if (difference == null) {
+				var candidates = metadataRegistry(providerSource).matchingFields(providerSource, propertyValue);
+				var keys = meanings.computeIfAbsent(List.of(record.getTraceFileName(), providerSource),
+						ignored -> new LinkedHashMap<>());
+				var prior = keys.putIfAbsent(propertyName, new java.util.LinkedHashSet<>(candidates));
+				if (prior != null) {
+					prior.retainAll(candidates);
+					if (prior.isEmpty()) difference = "metadata key collision: same key represents incompatible native fields";
+				}
+			}
 			boolean matches = difference == null;
 			if (matches) {
 				difference = "translated value matches native metadata evidence";
@@ -2345,11 +2645,16 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	}
 
 	private String providerMetadataDifference(String source, String value) {
+		NativeMetadataRegistry registry = metadataRegistry(source);
+		return registry == null ? "no native metadata mapping registered for source" : registry.difference(source, value);
+	}
+
+	private NativeMetadataRegistry metadataRegistry(String source) {
 		for (ProviderTraceInterpreter interpreter : providerTraceInterpreters) {
 			NativeMetadataRegistry registry = interpreter.nativeMetadataRegistry(source);
-			if (registry != null) return registry.difference(source, value);
+			if (registry != null) return registry;
 		}
-		return "no native metadata mapping registered for source";
+		return null;
 	}
 
 	@SuppressWarnings("unchecked")
@@ -2584,7 +2889,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				continue;
 			}
 			TraceMessage chunk = (TraceMessage) record.getExtractedData()
-					.get("streamingChunkMessageStructure");
+					.get(StreamingCallbackEvidence.CHUNK_MESSAGE_STRUCTURE);
 			TraceMessage accumulated = (TraceMessage) record.getExtractedData()
 					.get("accumulatedMessageStructure");
 			if (chunk != null && !data.containsKey("streamTextEvidenceVersion")) {
@@ -2696,12 +3001,11 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			String anEventName,
 			TraceFilesProcessorError anError) {
 		List<TraceRecord> callbackRecords =
-				records(aProvider, StreamingMode.STREAMING, anEventName);
+				StreamingCallbackEvidence.callbacks(traceRecords.values(), aProvider, StreamingMode.STREAMING, anEventName);
 		boolean found = !callbackRecords.isEmpty();
 		if (found && PARTIAL_RESPONSE_CALLBACK_INVOKED.equals(anEventName)) {
-			found = partialCallbackArgumentsMatchTranslatedChunks(
-					aProvider,
-					callbackRecords);
+			found = StreamingCallbackEvidence.partialArgumentsMatch(
+                    traceRecords.values(), aProvider, callbackRecords, this::messagesHaveSameRoleAndText);
 			if (!found) {
 				recordError(
 						TraceFilesProcessorError
@@ -2730,31 +3034,6 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 						found));
 	}
 
-	private boolean partialCallbackArgumentsMatchTranslatedChunks(
-			String aProvider,
-			List<TraceRecord> someCallbackRecords) {
-		List<TraceRecord> accumulatedChunkRecords = records(
-				aProvider,
-				StreamingMode.STREAMING,
-				"streaming_chunk_accumulated");
-		for (TraceRecord callbackRecord : someCallbackRecords) {
-			TraceMessage callbackArgument =
-					(TraceMessage) callbackRecord.getExtractedData()
-							.get("callbackArgumentStructure");
-			TraceMessage translatedChunk = nearestPrecedingMessage(
-					callbackRecord,
-					accumulatedChunkRecords,
-					"streamingChunkMessageStructure");
-			if (callbackArgument == null
-					|| translatedChunk == null
-					|| !messagesHaveSameRoleAndText(
-							callbackArgument,
-							translatedChunk)) {
-				return false;
-			}
-		}
-		return true;
-	}
 
 	private boolean completeCallbackArgumentsMatchMergedResponses(
 			String aProvider,
@@ -2767,7 +3046,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			TraceMessage callbackArgument =
 					(TraceMessage) callbackRecord
 							.getExtractedData()
-							.get("callbackArgumentStructure");
+							.get(StreamingCallbackEvidence.CALLBACK_ARGUMENT_STRUCTURE);
 			TraceMessage mergedMessage = nearestPrecedingMergedMessage(
 					callbackRecord,
 					mergedRecords);
@@ -3062,13 +3341,11 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return List.copyOf(result);
 	}
 
-	private String canonicalInputText(String value) {
-		if (TraceTextSummary.matches(value, BridgeDemoTraceInputs.SUMMARY_PROMPT)
-				|| TraceTextSummary.matches(value, BridgeDemoTraceInputs.LEGACY_SUMMARY_PROMPT)
-				|| TraceTextSummary.matches(value, BridgeDemoTraceInputs.LEGACY_SUMMARY_PROMPT.strip()))
-			return TraceTextSummary.from(BridgeDemoTraceInputs.SUMMARY_PROMPT).token();
-		return normalizedText(value);
-	}
+    private String canonicalInputText(String value) {
+        for (var entry : inputTextEquivalences.entrySet())
+            if (TraceTextSummary.matches(value, entry.getKey())) return TraceTextSummary.from(entry.getValue()).token();
+        return normalizedText(value);
+    }
 
 	private void addCanonicalMapShape(
 			List<String> aResult,
@@ -3258,6 +3535,20 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				+ " match=false detail=\"event occurrence count differs\"";
 	}
 
+    /** Retention can consume only streams preceding a later request. Select by
+     * request boundaries, not valid merge/callback contents: damaged evidence in
+     * a consumed exchange must remain visible. Keep request snapshots themselves. */
+    public Collection<TraceRecord> streamingRetentionEvidence(String provider) {
+        var requests = sessionTraceFile == null ? requestRecords(provider, StreamingMode.STREAMING) : sessionRequests();
+        var ends = new LinkedHashMap<String, Integer>();
+        for (var request : requests)
+            ends.merge(request.getTraceFileName(), request.getTraceFileLineNumber(), Math::max);
+        return traceRecords.values().stream().filter(record -> {
+            var end = ends.get(record.getTraceFileName());
+            return end != null && record.getTraceFileLineNumber() <= end;
+        }).toList();
+    }
+
 	public TraceCheckResult checkStreamingChunksReflectedInNextContextWindow(
 			String aProvider) {
 		List<StreamingChunkComposition> compositions =
@@ -3322,7 +3613,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			String aProvider,
 			StreamingMode aMode) {
 		ArrayList<ContextWindowSnapshot> result = new ArrayList<>();
-		for (TraceRecord record : requestRecords(aProvider, aMode)) {
+		for (TraceRecord record : sessionTraceFile == null ? requestRecords(aProvider, aMode) : sessionRequests()) {
 			CanonicalTraceRequest request =
 					(CanonicalTraceRequest) record.getExtractedData().get(
 							"providerDependentCanonicalRequest");
@@ -3351,7 +3642,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			if ("streaming_chunk_accumulated".equals(eventName)) {
 				TraceMessage chunk =
 						(TraceMessage) record.getExtractedData()
-								.get("streamingChunkMessageStructure");
+								.get(StreamingCallbackEvidence.CHUNK_MESSAGE_STRUCTURE);
 				// Whitespace-only chunks are part of the answer too.
 				if (chunk == null
 						|| !"ASSISTANT".equals(standardRole(chunk.role()))
@@ -3435,7 +3726,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 					<= aMergedRecord.getId().sequenceNumber()) {
 				continue;
 			}
-			if (previousAssistantMessage(snapshot.messages()) != null) {
+			if (sessionTraceFile != null || previousAssistantMessage(snapshot.messages()) != null) {
 				return snapshot;
 			}
 		}
@@ -3544,33 +3835,14 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				+ "\"";
 	}
 
-	public TraceCheckResult checkExpectedInputs() {
-		if (expectedInputs.systemPromptTexts().isEmpty()
-				&& expectedInputs.userPromptTexts().isEmpty()
-				&& expectedInputs.expectedImageBytes().length == 0) {
-			return traceCheckResult(promptBasedCheckReportLines());
-		}
-		for (String provider : providers()) {
-			checkExpectedInputs(provider, StreamingMode.NON_STREAMING);
-			checkExpectedInputs(provider, StreamingMode.STREAMING);
-		}
-		return traceCheckResult(promptBasedCheckReportLines());
-	}
 
-	public TraceCheckResult checkExpectedPrompts() {
-		checkExpectedInputs();
-		return checkerResult(EXPECTED_PROMPT_IN_CONTEXT_WINDOW);
-	}
 
-	public TraceCheckResult checkExpectedPrompts(String aProvider) {
-		checkExpectedInputs(aProvider, StreamingMode.NON_STREAMING);
-		checkExpectedInputs(aProvider, StreamingMode.STREAMING);
-		return checkerResultForProvider(
-				EXPECTED_PROMPT_IN_CONTEXT_WINDOW, aProvider);
-	}
+
+
+
 
 	public TraceCheckResult checkProviderGenericImagesMatch() {
-		for (String provider : providerTraceFiles.keySet()) {
+		for (String provider : sessionTraceFile == null ? providerTraceFiles.keySet() : providers()) {
 			checkImageMatches(provider, StreamingMode.NON_STREAMING,
 					PROVIDER_GENERIC_IMAGE_MATCH);
 			checkImageMatches(provider, StreamingMode.STREAMING,
@@ -3587,125 +3859,31 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return checkerResultForProvider(PROVIDER_GENERIC_IMAGE_MATCH, aProvider);
 	}
 
-	public TraceCheckResult checkExpectedGenericImagesMatch() {
-		for (String provider : providerTraceFiles.keySet()) {
-			checkImageMatches(provider, StreamingMode.NON_STREAMING,
-					EXPECTED_GENERIC_IMAGE_MATCH);
-			checkImageMatches(provider, StreamingMode.STREAMING,
-					EXPECTED_GENERIC_IMAGE_MATCH);
-		}
-		return checkerResult(EXPECTED_GENERIC_IMAGE_MATCH);
-	}
 
-	public TraceCheckResult checkExpectedGenericImagesMatch(String aProvider) {
-		checkImageMatches(aProvider, StreamingMode.NON_STREAMING,
-				EXPECTED_GENERIC_IMAGE_MATCH);
-		checkImageMatches(aProvider, StreamingMode.STREAMING,
-				EXPECTED_GENERIC_IMAGE_MATCH);
-		return checkerResultForProvider(EXPECTED_GENERIC_IMAGE_MATCH, aProvider);
-	}
+
+
 
 	private void checkImageMatches(String aProvider, StreamingMode aMode,
 			String aCheckName) {
+		// An explicit history slice need not contain both modes. Its request-field
+		// gate requires the selected requests; absent modes are not invented work.
+		if (isEvidenceSelection() && requestRecords(aProvider, aMode).isEmpty()) return;
 		ImageComparison comparison = findImageComparison(
 				requestRecords(aProvider, aMode), expectedInputs.expectedImageBytes());
-		boolean matches = PROVIDER_GENERIC_IMAGE_MATCH.equals(aCheckName)
-				? comparison.generic() != null
-						&& comparison.generic().equals(comparison.provider())
-				: comparison.expected().equals(comparison.generic());
+		boolean matches = comparison.generic() != null && comparison.generic().equals(comparison.provider());
 		recordCheckerMessage(imageComparisonMessage(
 				aCheckName, aProvider, aMode, comparison, matches));
 	}
 
-	public TraceCheckResult checkExpectedInputs(
-			String aProvider,
-			StreamingMode aMode) {
-		List<TraceRecord> requestRecords =
-				requestRecords(aProvider, aMode);
-		for (int i = 0; i < expectedInputs.systemPromptTexts().size(); i++) {
-			String expectedText = expectedInputs.systemPromptTexts().get(i);
-			TraceRecord matchingRecord =
-					findRequestWithText(requestRecords, "SYSTEM", expectedText);
-			boolean found = matchingRecord != null;
-			expectedInputMatchResults.add(found);
-			recordCheckerMessage(
-					expectedTextMessage(
-							aProvider,
-							aMode,
-							i,
-							"SYSTEM",
-							expectedText,
-							matchingRecord,
-							found));
-		}
-		for (int i = 0; i < expectedInputs.userPromptTexts().size(); i++) {
-			String expectedText = expectedInputs.userPromptTexts().get(i);
-			TraceRecord matchingRecord =
-					findRequestWithText(requestRecords, "USER", expectedText);
-			boolean found = matchingRecord != null;
-			expectedInputMatchResults.add(found);
-			recordCheckerMessage(
-					expectedTextMessage(
-							aProvider,
-							aMode,
-							i,
-							"USER",
-							expectedText,
-							matchingRecord,
-							found));
-		}
-		if (expectedInputs.expectedImageBytes().length > 0) {
-			ImageComparison comparison = findImageComparison(
-					requestRecords, expectedInputs.expectedImageBytes());
-			boolean providerGenericMatches = comparison.generic() != null
-					&& comparison.generic().equals(comparison.provider());
-			boolean expectedGenericMatches =
-					comparison.expected().equals(comparison.generic());
-			expectedInputMatchResults.add(providerGenericMatches);
-			expectedInputMatchResults.add(expectedGenericMatches);
-			recordCheckerMessage(imageComparisonMessage(
-					PROVIDER_GENERIC_IMAGE_MATCH, aProvider, aMode,
-					comparison, providerGenericMatches));
-			recordCheckerMessage(imageComparisonMessage(
-					EXPECTED_GENERIC_IMAGE_MATCH, aProvider, aMode,
-					comparison, expectedGenericMatches));
-		}
-		return traceCheckResult(promptBasedCheckReportLines());
-	}
 
-	private TraceRecord findRequestWithText(
-			List<TraceRecord> aRequestRecords,
-			String aRole,
-			String anExpectedText) {
-		for (TraceRecord record : aRequestRecords) {
-			for (TraceMessage message :
-					providerDependentRequestMessages(record)) {
-				if (!standardRole(aRole).equals(standardRole(message.role()))) {
-					continue;
-				}
-				for (TracePart part : message.parts()) {
-					if ("text".equals(part.kind())
-							&& (promptTextMatches(
-									part.value(),
-									anExpectedText) || ("SYSTEM".equals(standardRole(aRole))
-									&& knownSystemSequenceContains(part.value(), anExpectedText)))) {
-						return record;
-					}
-				}
-			}
-		}
-		return null;
-	}
 
-	private boolean promptTextMatches(
+
+
+	boolean promptTextMatches(
 			String anObservedText,
 			String anExpectedText) {
-		if (BridgeDemoTraceInputs.SUMMARY_PROMPT.equals(anExpectedText)) {
-			for (String alternative : List.of(BridgeDemoTraceInputs.LEGACY_SUMMARY_PROMPT,
-					BridgeDemoTraceInputs.LEGACY_SUMMARY_PROMPT.strip())) {
-				if (TraceTextSummary.matches(anObservedText, alternative)) return true;
-			}
-		}
+        for (var entry : inputTextEquivalences.entrySet())
+            if (entry.getValue().equals(anExpectedText) && TraceTextSummary.matches(anObservedText, entry.getKey())) return true;
 		if (TraceTextSummary.fromToken(anObservedText) != null || TraceTextSummary.fromToken(anExpectedText) != null)
 			return TraceTextSummary.matches(anObservedText, anExpectedText);
 		String observed = normalizedText(anObservedText);
@@ -3715,7 +3893,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				|| expected.contains(observed);
 	}
 
-	private ImageComparison findImageComparison(
+	ImageComparison findImageComparison(
 			List<TraceRecord> aRequestRecords,
 			byte[] someExpectedBytes) {
 		ImageByteSummary expected = ImageByteSummary.from(someExpectedBytes);
@@ -3739,7 +3917,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	}
 
 	@SuppressWarnings("unchecked")
-	private List<TraceMessage> providerDependentRequestMessages(
+	List<TraceMessage> providerDependentRequestMessages(
 			TraceRecord aRecord) {
 		Object value =
 				aRecord.getExtractedData()
@@ -3777,35 +3955,9 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return messages.get(0).parts();
 	}
 
-	private String expectedTextMessage(
-			String aProvider,
-			StreamingMode aMode,
-			int anExpectedIndex,
-			String anExpectedRole,
-			String anExpectedText,
-			TraceRecord aMatchingRecord,
-			boolean isFound) {
-		return EXPECTED_PROMPT_IN_CONTEXT_WINDOW
-				+ " provider="
-				+ aProvider
-				+ " mode="
-				+ aMode
-				+ " expectedPromptId="
-				+ expectedPromptId(anExpectedRole, anExpectedIndex)
-				+ " expectedPromptIndex="
-				+ anExpectedIndex
-				+ " expectedRole="
-				+ anExpectedRole
-				+ " traceLine="
-				+ traceLineLocation(aMatchingRecord)
-				+ " match="
-				+ isFound
-				+ " promptPreview=\""
-				+ preview(anExpectedText)
-				+ "\"";
-	}
 
-	private String imageComparisonMessage(
+
+	String imageComparisonMessage(
 			String aCheckName,
 			String aProvider,
 			StreamingMode aMode,
@@ -3828,6 +3980,10 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	public TraceCheckResult checkContextWindowContinuity(
 			String aProvider,
 			StreamingMode aMode) {
+		if (sessionTraceFile != null) {
+			checkSessionContinuity(aProvider, aMode);
+			return traceCheckResult(promptBasedCheckReportLines());
+		}
 		boolean[] observedCompactions =
 				new boolean[expectedInputs.compactionPromptTexts().size()];
 		List<TraceRecord> requestRecords =
@@ -4074,7 +4230,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 
 	/** With compact system text, validate a complete known sequence instead of
 	 * searching an unavailable middle substring or concatenating serialized tokens. */
-	private boolean knownSystemSequenceContains(String observed, String required) {
+	boolean knownSystemSequenceContains(String observed, String required) {
 		var summary = TraceTextSummary.fromToken(observed);
 		if (summary == null || !summary.sha256().isEmpty()) return false;
 		List<String> prompts = expectedInputs.systemPromptTexts();
@@ -4274,11 +4430,11 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				+ " compactionObserved=false";
 	}
 
-	private String expectedPromptId(String aRole, int anExpectedIndex) {
+	String expectedPromptId(String aRole, int anExpectedIndex) {
 		return standardRole(aRole) + "[" + anExpectedIndex + "]";
 	}
 
-	private String expectedPromptId(String anExpectedPromptText) {
+	String expectedPromptId(String anExpectedPromptText) {
 		for (int i = 0; i < expectedInputs.systemPromptTexts().size(); i++) {
 			if (promptTextMatches(
 					expectedInputs.systemPromptTexts().get(i),
@@ -4382,7 +4538,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return aList == null ? 0 : aList.size();
 	}
 
-	private String traceLineLocation(TraceRecord aTraceRecord) {
+	String traceLineLocation(TraceRecord aTraceRecord) {
 		if (aTraceRecord == null) {
 			return "";
 		}
@@ -4391,7 +4547,109 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				+ aTraceRecord.getTraceFileLineNumber();
 	}
 
-	private List<TraceRecord> requestRecords(
+	private List<TraceRecord> sessionRequests() {
+		return traceRecords.values().stream()
+				.filter(r -> "request_sent".equals(r.getTraceLine().getEventName()))
+				.sorted(java.util.Comparator.comparingInt(r -> r.getId().sequenceNumber())).toList();
+	}
+
+    /** Request preparation for both endpoints of the history comparisons. Selection
+     * uses request positions, never successfully decoded context: a missing dump
+     * must remain in the evidence. Separate A1 files keep their provider/mode order. */
+    public Collection<TraceRecord> historyRequestEvidence(String provider) {
+        var needed = new java.util.LinkedHashSet<TraceRecord>();
+        var groups = new LinkedHashMap<String, List<TraceRecord>>();
+        for (var record : traceRecords.values()) {
+            if (!"request_sent".equals(record.getTraceLine().getEventName())) continue;
+            if (sessionTraceFile == null && !provider.equals(record.getId().provider())) continue;
+            groups.computeIfAbsent(record.getTraceFileName(), key -> new ArrayList<>()).add(record);
+        }
+        for (var requests : groups.values()) {
+            requests.sort(java.util.Comparator.comparingInt(TraceRecord::getTraceFileLineNumber));
+            var endpoints = new java.util.LinkedHashSet<Integer>();
+            for (int i = 1; i < requests.size(); i++) {
+                if (!provider.equals(requests.get(i).getId().provider())) continue;
+                endpoints.add(i - 1);
+                endpoints.add(i);
+            }
+            for (int index : endpoints) {
+                var request = requests.get(index);
+                int start = index == 0 ? 0 : requests.get(index - 1).getTraceFileLineNumber();
+                for (var record : traceRecords.values())
+                    if (record.getTraceFileName().equals(request.getTraceFileName())
+                            && record.getTraceFileLineNumber() > start
+                            && record.getTraceFileLineNumber() <= request.getTraceFileLineNumber()
+                            && REQUEST_PREPARATION_EVENTS.contains(record.getTraceLine().getEventName()))
+                        needed.add(record);
+            }
+        }
+        return needed;
+    }
+
+    /** Fixed demo continuity compares request histories only. Session continuity
+     * also consumes responses between each preceding request and this provider's
+     * next request. Include those intervals for validation, never a final unused response. */
+    public Collection<TraceRecord> completedResponseRetentionEvidence(String provider) {
+        if (sessionTraceFile == null) return List.of();
+        var requests = sessionRequests();
+        var evidence = new java.util.LinkedHashSet<TraceRecord>();
+        for (int i = 1; i < requests.size(); i++) {
+            var current = requests.get(i);
+            if (!provider.equals(current.getId().provider())) continue;
+            int start = requests.get(i - 1).getId().sequenceNumber();
+            int end = current.getId().sequenceNumber();
+            for (var record : traceRecords.values()) {
+                int sequence = record.getId().sequenceNumber();
+                if (sequence >= start && sequence < end) evidence.add(record);
+            }
+        }
+        return evidence;
+    }
+	/** A session keeps its history when either the provider or streaming mode changes. */
+	private void checkSessionContinuity(String provider, StreamingMode mode) {
+		List<TraceRecord> requests = sessionRequests();
+		for (int i = 1; i < requests.size(); i++) {
+			TraceRecord current = requests.get(i), previous = requests.get(i - 1);
+			if (!provider.equals(current.getId().provider()) || mode != current.getId().mode()) continue;
+			var before = (CanonicalTraceRequest) previous.getExtractedData().get("providerIndependentCanonicalRequest");
+			var after = (CanonicalTraceRequest) current.getExtractedData().get("providerIndependentCanonicalRequest");
+			if (before == null || after == null) continue; // RequestsTraced is a prerequisite.
+			for (String role : List.of("SYSTEM", "USER", "ASSISTANT")) {
+				List<TraceMessage> expected = new ArrayList<>(before.contextWindow().stream()
+						.filter(m -> role.equals(standardRole(m.role()))).toList());
+				if ("ASSISTANT".equals(role)) {
+					for (TraceRecord r : traceRecords.values()) {
+						if (r.getId().sequenceNumber() <= previous.getId().sequenceNumber()
+								|| r.getId().sequenceNumber() >= current.getId().sequenceNumber()) continue;
+						var response = (CanonicalTraceResponse) r.getExtractedData().get("providerIndependentCanonicalResponse");
+						if (response != null) expected.addAll(response.messages());
+					}
+				}
+				if (expected.isEmpty()) continue;
+				List<TraceMessage> remaining = new ArrayList<>(after.contextWindow());
+				boolean retained = true;
+				int from = 0;
+				for (TraceMessage message : expected) {
+					int found = -1;
+					for (int j = from; j < remaining.size(); j++)
+						if (messagesHaveSameRoleAndText(message, remaining.get(j))) { found = j; break; }
+					if (found < 0) retained = false; else from = found + 1;
+				}
+				String name = switch (role) {
+					case "SYSTEM" -> PREVIOUS_SYSTEM_PROMPT_IN_CONTEXT_WINDOW;
+					case "USER" -> PREVIOUS_PROMPT_IN_NEW_CONTEXT_WINDOW;
+					default -> PREVIOUS_COMPLETED_RESPONSE_IN_CONTEXT_WINDOW;
+				};
+				recordCheckerMessage(contextWindowContinuityMessage(name, provider, mode, previous, current, retained));
+			}
+			List<String> images = imagePartValues(before.contextWindow());
+			if (!images.isEmpty()) recordCheckerMessage(PREVIOUS_IMAGE_IN_CONTEXT_WINDOW
+					+ " provider=" + provider + " mode=" + mode + " currentTraceLine=" + traceLineLocation(current)
+					+ " match=" + containsAllOccurrences(imagePartValues(after.contextWindow()), images));
+		}
+	}
+
+	List<TraceRecord> requestRecords(
 			String aProvider,
 			StreamingMode aMode) {
 		ArrayList<TraceRecord> result = new ArrayList<>();
@@ -4673,6 +4931,9 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			result.add(
 					new TracePart("imageBytes", imageMatcher.group(1)));
 		}
+		var imageSummary = java.util.regex.Pattern.compile(
+				"value=imageBytes\\((count=\\d+,prefix=[0-9a-f]*,suffix=[0-9a-f]*)\\)").matcher(aSegment);
+		while (imageSummary.find()) result.add(new TracePart("imageBytes", imageSummary.group(1)));
 		if (result.isEmpty()) {
 			java.util.regex.Matcher formattedText =
 					java.util.regex.Pattern
@@ -4793,7 +5054,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	private String requestModel(TraceRecord aRecord) {
 		String model = aRecord.getTraceLine()
 				.getAuxiliaryData()
-				.get("requestModel");
+				.get(eduAI.trace.lib.LibTraceKeys.REQUEST_MODEL);
 		if (!isBlank(model)) {
 			return model;
 		}
@@ -4801,7 +5062,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				aRecord.getTraceLine()
 						.getAuxiliaryData()
 						.get("providerIndependentParameterStore"));
-		return values.getOrDefault("current_models", "");
+		return values.getOrDefault(eduAI.properties.AIPropertyNames.CURRENT_MODELS, "");
 	}
 
 	private Map<String, String> canonicalPropertyValues(String aDump) {
@@ -5129,7 +5390,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return role;
 	}
 
-	private String standardRole(String aRole) {
+	String standardRole(String aRole) {
 		if (aRole == null) {
 			return "";
 		}
@@ -5638,6 +5899,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	}
 
 	private List<String> traceFileCheckReportLines() {
+		if (sessionTraceFile != null) return checkSessionTraceFile().level3Messages();
 		ArrayList<String> result = new ArrayList<>();
 		result.add("Trace File Checks");
 		for (Map.Entry<String, TraceFiles> entry :
@@ -5815,7 +6077,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		aLines.add(builder.toString());
 	}
 
-	private List<String> promptBasedCheckReportLines() {
+	List<String> promptBasedCheckReportLines() {
 		ArrayList<String> result = new ArrayList<>();
 		result.add("Prompt Checks");
 		List<PromptReportSubject> prompts = expectedPromptReportSubjects();
@@ -6762,7 +7024,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return value;
 	}
 
-	private void recordCheckerMessage(String aMessage) {
+	void recordCheckerMessage(String aMessage) {
 		recordCheckerMessage(inferredLevel(aMessage), aMessage);
 	}
 
@@ -6792,7 +7054,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 						+ reportValue(aTraceFile));
 	}
 
-	private void recordCheckerMessage(
+	void recordCheckerMessage(
 			TraceProcessorMessageLevel aLevel,
 			String aMessage) {
 		if (aLevel == TraceProcessorMessageLevel.WARNING) {
@@ -7030,7 +7292,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 								"previousLastInCurrentContextWindow=false"));
 	}
 
-	private String preview(String aText) {
+	String preview(String aText) {
 		if (aText == null) {
 			return "";
 		}

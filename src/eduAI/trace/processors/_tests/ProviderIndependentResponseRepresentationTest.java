@@ -85,9 +85,9 @@ public class ProviderIndependentResponseRepresentationTest {
 	}
 
 	private TraceCheckResult responseMatchResult(Path aTraceDirectory) {
-		BridgeDemoTraceFilesProcessor processor =
-				new BridgeDemoTraceFilesProcessor();
-		processor.setTraceDirectory(aTraceDirectory.toString());
+		BridgeDemoTraceInformation information = new BridgeDemoTraceInformation(aTraceDirectory);
+		TraceFilesProcessor processor = new NativeTraceFilesProcessor(
+				information.traceFiles(), information.expectedInputs());
 		processor.processTraceFiles();
 		return processor.checkProviderGenericResponseMatches();
 	}

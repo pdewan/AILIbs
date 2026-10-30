@@ -19,6 +19,18 @@ public class ResponseBehaviorBrokenTraceFixturesGenerator {
 		TraceFixtureMutator mutator = new TraceFixtureMutator();
 		ArrayList<Path> result = new ArrayList<>();
 		for (String fileName : TraceFixtureFilter.TRACE_FILE_NAMES) {
+			for (var collision : MetadataKeyCollisionMutations.create(
+					java.nio.file.Files.readAllLines(aSource.resolve(fileName))).entrySet()) {
+				Path directory = aTarget.resolve(collision.getKey());
+				java.nio.file.Files.createDirectories(directory);
+				try (var inputs = java.nio.file.Files.list(aSource)) {
+					for (Path input : inputs.filter(java.nio.file.Files::isRegularFile).toList())
+						java.nio.file.Files.copy(input, directory.resolve(input.getFileName()),
+								java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+				}
+				java.nio.file.Files.write(directory.resolve(fileName), collision.getValue());
+				result.add(directory);
+			}
 			String responseField = fileName.contains("NonStreaming")
 					? "providerDependentResponse"
 					: "providerIndependentResponse";

@@ -267,7 +267,8 @@ public final class GenericTrace {
 		return token;
 	}
 
-	static String formatAuxiliaryData(Map<String, String> anAuxiliaryData) {
+	/** Shared escaping contract for emitted traces and edited trace fixtures. */
+	public static String formatAuxiliaryData(Map<String, String> anAuxiliaryData) {
 		StringBuilder builder = new StringBuilder();
 		for (Map.Entry<String, String> entry : anAuxiliaryData.entrySet()) {
 			if (builder.length() > 0) {

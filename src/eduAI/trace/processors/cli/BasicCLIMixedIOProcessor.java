@@ -22,10 +22,11 @@ import eduAI.trace.processors.cli.CLIMixedIO.Output;
 
 /** Parses serial CLI output. History bodies are opaque, never reinterpreted as input. */
 public final class BasicCLIMixedIOProcessor implements CLIMixedIOProcessor {
+	private static final String COMPACTION_NOTICE_PREFIX = "Context window compacted:";
     private static final Pattern ECHO = Pattern.compile("^\\[(\\d+)\\] (.*)$");
     private static final Pattern START = Pattern.compile("^@@start \\[(\\d+)\\] (.+)$");
     private static final Pattern END = Pattern.compile(
-            "^@@end \\[(\\d+)\\] \\(Time: \\d{2,}:\\d{2}:\\d{2}\\.\\d{3}\\)$");
+            "^@@end \\[(\\d+)\\] \\(Time: \\d{2,}:[0-5]\\d:[0-5]\\d\\.\\d{3}\\)$");
     private static final Pattern STREAM = Pattern.compile("^@@STREAM\\[([^]\\r\\n]+)\\] (.*)$");
     private final CLIInputProcessor inputProcessor;
 
@@ -54,6 +55,9 @@ public final class BasicCLIMixedIOProcessor implements CLIMixedIOProcessor {
             while (index < lines.size()) {
                 String line = withoutInputPrefix(lines.get(index));
                 if (line.isBlank() || line.startsWith("## ")) { index++; continue; }
+                // EduCopilot emits this optional status before the corresponding input echo.
+                // It is observational output, never a source of expected prompts or properties.
+                if (line.startsWith(COMPACTION_NOTICE_PREFIX)) { index++; continue; }
                 Matcher stream = STREAM.matcher(line);
                 if (stream.matches()) {
                     chunks.add(new Chunk(stream.group(1), stream.group(2)));
@@ -63,6 +67,8 @@ public final class BasicCLIMixedIOProcessor implements CLIMixedIOProcessor {
                 Matcher echo = ECHO.matcher(line);
                 if (!echo.matches()) return failure(index + 1, "Expected an input echo or streaming marker");
                 int number = Integer.parseInt(echo.group(1));
+                if(number<=0 || !observations.isEmpty() && number<=observations.get(observations.size()-1).number())
+                    return failure(index+1,"Echo command numbers must be positive and strictly increasing");
                 String input = echo.group(2);
                 int sourceLine = ++index;
                 Optional<Output> output = Optional.empty();

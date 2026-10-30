@@ -11,10 +11,27 @@ public class NativeMetadataRegistry {
 	private static final Pattern DURATION_DUMP = Pattern.compile(
 			"^[^:]+: java\\.time\\.Duration interfaces=\\[[^]]*\\] toString=\"([^\"]+)\"$");
 	private final Map<String, Function<String, String>> extractors = new LinkedHashMap<>();
+	private final Map<String, String> meanings = new LinkedHashMap<>();
 
 	public void register(String key, Function<String, String> extractor) {
+		register(key, key, extractor);
+	}
+
+	/** Alternative representations (for example nanos and Duration) retain one meaning. */
+	public void register(String key, String meaning, Function<String, String> extractor) {
 		extractors.put(java.util.Objects.requireNonNull(key),
 				java.util.Objects.requireNonNull(extractor));
+		meanings.put(key, java.util.Objects.requireNonNull(meaning));
+	}
+
+	/** All possible native meanings; equal values deliberately remain ambiguous. */
+	public java.util.Set<String> matchingFields(String source, String actual) {
+		var matches = new java.util.LinkedHashSet<String>();
+		if (source != null) extractors.forEach((key, extractor) -> {
+			String value = extractor.apply(source);
+			if (value != null && value.equals(durationValue(actual))) matches.add(meanings.get(key));
+		});
+		return matches;
 	}
 
 	public void register(String key, Pattern pattern) {

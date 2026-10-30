@@ -73,10 +73,16 @@ public class EssentialBrokenTraceFixturesGenerator {
 
 	public List<Path> generate(Path aSource, Path aTarget)
 			throws IOException {
-		TraceFixtureMutator mutator = new TraceFixtureMutator();
-		List<Path> generated = new ArrayList<>();
+		return generate(aSource, aTarget, new TraceFixtureMutator());
+	}
 
+	public List<Path> generate(Path aSource, Path aTarget, TraceFixtureMutator mutator)
+			throws IOException {
+		List<Path> generated = new ArrayList<>();
+		var presentEvents = mutator.presentEventNames(aSource);
 		for (String eventName : EssentialTraceEvents.all().stream().sorted().toList()) {
+			// A1 and A2 share the filter catalog but do not emit all the same events.
+			if (!presentEvents.contains(eventName)) continue;
 			generated.add(mutator.createBrokenDataset(
 					aSource,
 					aTarget,

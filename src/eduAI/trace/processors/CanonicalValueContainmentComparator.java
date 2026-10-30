@@ -43,6 +43,17 @@ public class CanonicalValueContainmentComparator
 					aProviderIndependentObjectDump,
 					expected.canonicalValue().value(),
 					usedValueOffsets);
+			if (matchingOffset < 0 && expected.canonicalValue().kind() == CanonicalValueKind.DATA) {
+				var aggregates = java.util.regex.Pattern.compile(" textAggregate=\"([^\"]+)\"")
+						.matcher(aProviderIndependentObjectDump == null ? "" : aProviderIndependentObjectDump);
+				while (aggregates.find()) {
+					if (!usedValueOffsets.contains(aggregates.start(1))
+							&& eduAI.trace.TraceTextSummary.fromToken(aggregates.group(1)) != null
+							&& eduAI.trace.TraceTextSummary.matches(aggregates.group(1), expected.canonicalValue().value())) {
+						matchingOffset = aggregates.start(1); break;
+					}
+				}
+			}
 			if (matchingOffset < 0) {
 				List<Integer> componentOffsets = matchingStringComponentOffsets(
 						collectedValues,

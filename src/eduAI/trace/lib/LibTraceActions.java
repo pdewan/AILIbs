@@ -498,6 +498,7 @@ public class LibTraceActions {
 		data.put(
 				"callbackArgument",
 				traceValue("callbackArgument", aCallbackArgument));
+		data.put(LibTraceKeys.CALLBACK_ARGUMENT_IDENTITY, TraceObjectPrinter.objectIdentity(aCallbackArgument));
 		LibTrace.traceDesignPattern(
 				LibDesignPattern.SINGLE_MODEL_REQUEST_PROCESSING,
 				aSourceClass,
@@ -678,7 +679,15 @@ public class LibTraceActions {
 			Object aProviderIndependentContextWindow,
 			Object aProviderDependentConfiguration,
 			Object aProviderDependentContextWindow) {
+		traceRequestSent(aSourceClass, aMode, null, aProviderIndependentParameterStore,
+				aProviderIndependentContextWindow, aProviderDependentConfiguration, aProviderDependentContextWindow);
+	}
+
+	public static void traceRequestSent(Class<?> aSourceClass, StreamingMode aMode, String model,
+			Object aProviderIndependentParameterStore, Object aProviderIndependentContextWindow,
+			Object aProviderDependentConfiguration, Object aProviderDependentContextWindow) {
 		Map<String, String> data = new LinkedHashMap<>();
+		if (model != null) data.put(LibTraceKeys.REQUEST_MODEL, model);
 		data.put("mode", aMode == null ? null : aMode.name());
 		data.put(
 				"providerIndependentContextWindow",

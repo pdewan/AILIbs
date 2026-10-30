@@ -70,7 +70,7 @@ public class ProviderSpecificStructureCheckTest {
 	}
 
 	public void testCorrectAndMutatedTraceFiles() throws IOException {
-		BridgeDemoTraceFilesProcessor correct = processor(Path.of("correct_filtered"));
+		TraceFilesProcessor correct = processor(Path.of("correct_filtered"));
 		TraceCheckResult correctRequests =
 				correct.checkProviderGenericTextualContextWindowMatches();
 		TraceCheckResult correctParameters =
@@ -116,7 +116,7 @@ public class ProviderSpecificStructureCheckTest {
 
 		try (var directories = Files.list(Path.of("provider_structure_broken"))) {
 			for (Path directory : directories.filter(Files::isDirectory).toList()) {
-				BridgeDemoTraceFilesProcessor mutated = processor(directory);
+				TraceFilesProcessor mutated = processor(directory);
 				String mutationName = directory.getFileName().toString();
 				boolean requestMutation = mutationName.contains("request_sent");
 				boolean parameterMutation = mutationName.contains(
@@ -152,9 +152,9 @@ public class ProviderSpecificStructureCheckTest {
 	}
 
 	private void assertCanonicalStructuresPopulated(
-			BridgeDemoTraceFilesProcessor aProcessor) {
+			TraceFilesProcessor aProcessor) {
 		for (TraceRecord record :
-				aProcessor.getProcessor().getTraceRecords().values()) {
+				aProcessor.getTraceRecords().values()) {
 			String event = record.getTraceLine().getEventName();
 			if ("request_sent".equals(event)) {
 				CanonicalTraceRequest independent =
@@ -199,10 +199,10 @@ public class ProviderSpecificStructureCheckTest {
 		}
 	}
 
-	private BridgeDemoTraceFilesProcessor processor(Path aDirectory) {
-		BridgeDemoTraceFilesProcessor result =
-				new BridgeDemoTraceFilesProcessor();
-		result.setTraceDirectory(aDirectory.toString());
+	private TraceFilesProcessor processor(Path aDirectory) {
+		BridgeDemoTraceInformation information = new BridgeDemoTraceInformation(aDirectory);
+		TraceFilesProcessor result = new NativeTraceFilesProcessor(
+				information.traceFiles(), information.expectedInputs());
 		result.processTraceFiles();
 		return result;
 	}

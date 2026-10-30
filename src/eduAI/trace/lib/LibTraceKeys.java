@@ -1,10 +1,12 @@
 package eduAI.trace.lib;
 
 public interface LibTraceKeys {
+	String CALLBACK_ARGUMENT_IDENTITY = "callbackArgumentIdentity";
 	String SUMMARY = "summary";
 	String RAW_INPUT = "raw_input";
 	String RELATED_THREADS = "related_threads";
 	String MODEL = "model";
+	String REQUEST_MODEL = "requestModel";
 	String PROVIDER = "provider";
 	String MESSAGES = "messages";
 	String ERROR = "error";

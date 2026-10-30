@@ -8,6 +8,14 @@ import java.util.Collection;
 import eduAI.trace.lib.StreamingMode;
 
 public interface TraceFilesProcessor {
+    Collection<TraceRecord> streamingRetentionEvidence(String provider);
+    Collection<TraceRecord> completedResponseRetentionEvidence(String provider);
+    Collection<TraceRecord> historyRequestEvidence(String provider);
+    void processSelectedTraceLines(Collection<TraceRecord> records);
+    boolean isEvidenceSelection();
+    List<String> classesForEvents(java.util.Set<String> events);
+	void setExpectedContentChecks(ExpectedContentChecks checks);
+	TraceCheckResult checkExpectedRequestSettings();
 	void registerProviderTraceInterpreter(
 			ProviderTraceInterpreter anInterpreter);
 

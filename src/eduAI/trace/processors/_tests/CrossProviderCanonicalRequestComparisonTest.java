@@ -89,10 +89,10 @@ public class CrossProviderCanonicalRequestComparisonTest {
 		return aLine.substring(0, start) + field + aLine.substring(end);
 	}
 
-	private BridgeDemoTraceFilesProcessor processor(Path aDirectory) {
-		BridgeDemoTraceFilesProcessor result =
-				new BridgeDemoTraceFilesProcessor();
-		result.setTraceDirectory(aDirectory.toString());
+	private TraceFilesProcessor processor(Path aDirectory) {
+		BridgeDemoTraceInformation information = new BridgeDemoTraceInformation(aDirectory);
+		TraceFilesProcessor result = new NativeTraceFilesProcessor(
+				information.traceFiles(), information.expectedInputs());
 		result.processTraceFiles();
 		return result;
 	}

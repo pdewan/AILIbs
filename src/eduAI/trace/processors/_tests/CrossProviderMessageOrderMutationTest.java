@@ -32,9 +32,10 @@ public class CrossProviderMessageOrderMutationTest {
 				.findFirst()
 				.orElseThrow();
 
-		BridgeDemoTraceFilesProcessor processor =
-				new BridgeDemoTraceFilesProcessor();
-		processor.setTraceDirectory(directory.toString());
+		BridgeDemoTraceInformation information = new BridgeDemoTraceInformation(directory);
+		TraceFilesProcessor processor = new NativeTraceFilesProcessor(
+				information.traceFiles(), information.expectedInputs());
+                processor.setExpectedContentChecks(new eduAI.trace.processors.assignment1.BridgeDemoContentChecks((GenericTracesFileProcessor) processor));
 		processor.processTraceFiles();
 
 		assertPassed(

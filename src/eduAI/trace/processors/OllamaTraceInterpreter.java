@@ -6,6 +6,12 @@ import java.util.regex.Pattern;
 
 public class OllamaTraceInterpreter
 		extends AbstractProviderTraceInterpreter {
+	public static final String CONFIGURATION_TYPE = "io.github.ollama4j.utils.Options";
+
+	@Override
+	public boolean canInterpretProviderConfiguration(String configuration) {
+		return configuration != null && configuration.contains(CONFIGURATION_TYPE);
+	}
 	private static final Pattern MESSAGE_PATTERN =
 			Pattern.compile(
 					"OllamaChatMessage\\(role=([^,)]*), thinking=(?:null|\\\\?\"(?:\\\\.|[^\"\\\\])*\\\\?\"), response=\\\\?\"((?:\\\\.|[^\"\\\\])*)\\\\?\", images=(\\d+), imageBytes=(\\d+), imageSummary=imageBytes\\(count=(\\d+),prefix=([0-9a-f]*),suffix=([0-9a-f]*)\\)",
@@ -109,8 +115,10 @@ public class OllamaTraceInterpreter
 	}
 
 	private final NativeMetadataRegistry metadata = new NativeMetadataRegistry();
+	private static final String TOTAL_DURATION_FIELD = "totalDuration";
+	private static final long NANOS_PER_MILLISECOND = 1_000_000L;
 	private static final List<String> DURATION_FIELDS = List.of(
-			"totalDuration", "loadDuration", "promptEvalDuration", "evalDuration");
+			TOTAL_DURATION_FIELD, "loadDuration", "promptEvalDuration", "evalDuration");
 
 	public OllamaTraceInterpreter() {
 		for (String field : List.of("createdAt", "done")) {
@@ -119,7 +127,7 @@ public class OllamaTraceInterpreter
 		for (String field : DURATION_FIELDS) {
 			Pattern nanos = Pattern.compile("\\b" + field + "=(-?\\d+)(?=[,)])");
 			metadata.register(field, nanos);
-			metadata.register(field + "AsDuration", source -> {
+			metadata.register(field + "AsDuration", field, source -> {
 				var matcher = nanos.matcher(source);
 				if (!matcher.find()) return null;
 				try {
@@ -133,13 +141,13 @@ public class OllamaTraceInterpreter
 		metadata.register("outputTokens", EVAL_COUNT_PATTERN);
 		metadata.register("resolvedModel", MODEL_PATTERN);
 		metadata.register("terminationReason", DONE_REASON_PATTERN);
-		metadata.register("totalTimeMs", source -> {
+		metadata.register("totalTimeMs", TOTAL_DURATION_FIELD, source -> {
 			java.util.regex.Matcher matcher = TOTAL_DURATION_PATTERN.matcher(source);
 			if (!matcher.find()) {
 				return null;
 			}
 			try {
-				return Long.toString(Long.parseLong(matcher.group(1)) / 1_000_000L);
+				return Long.toString(Long.parseLong(matcher.group(1)) / NANOS_PER_MILLISECOND);
 			} catch (NumberFormatException e) {
 				return null;
 			}

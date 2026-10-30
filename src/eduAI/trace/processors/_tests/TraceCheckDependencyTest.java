@@ -42,7 +42,7 @@ public class TraceCheckDependencyTest {
 
 	@FunctionalInterface
 	private interface CheckCall {
-		TraceCheckResult check(BridgeDemoTraceFilesProcessor aProcessor);
+		TraceCheckResult check(TraceFilesProcessor aProcessor);
 	}
 
 	@FunctionalInterface
@@ -115,7 +115,7 @@ public class TraceCheckDependencyTest {
 
 	private List<TraceDataset> traceDatasets() throws IOException {
 		List<TraceDataset> result = new ArrayList<>();
-		result.add(new TraceDataset(DEFAULT_TRACE_DIRECTORY, null));
+		result.add(new TraceDataset(DEFAULT_TRACE_DIRECTORY, new BridgeDemoTraceInformation(DEFAULT_TRACE_DIRECTORY).expectedInputs()));
 		if (!Files.isDirectory(BROKEN_TRACE_DIRECTORY)) {
 			return result;
 		}
@@ -140,11 +140,11 @@ public class TraceCheckDependencyTest {
 			Path aDirectory) {
 		if (!EXPECTED_PROMPT_MISSING_DIRECTORY.equals(
 				aDirectory.getFileName().toString())) {
-			return null;
+			return new BridgeDemoTraceInformation(aDirectory).expectedInputs();
 		}
 		GenericTracesFileProcessor.ExpectedInputs expectedInputs =
-				new BridgeDemoTraceFilesProcessorDelegate()
-						.bridgeDemoExpectedInputs();
+				new BridgeDemoTraceInformation()
+						.expectedInputs();
 		return new GenericTracesFileProcessor.ExpectedInputs(
 				expectedInputs.systemPromptTexts(),
 				List.of(
@@ -178,80 +178,88 @@ public class TraceCheckDependencyTest {
 						p -> List.of()),
 				new CheckSpecification(
 						"provider generic context window match", request,
-						BridgeDemoTraceFilesProcessor::checkProviderGenericTextualContextWindowMatches,
+						TraceFilesProcessor::checkProviderGenericTextualContextWindowMatches,
 						TraceFilesProcessor::getRequestContextWindowMatchResults),
 				new CheckSpecification(
 						"provider generic parameter match",
 						Set.of("request_sent", "parameter_translated"),
-						BridgeDemoTraceFilesProcessor::checkProviderGenericParameterMatches,
+						TraceFilesProcessor::checkProviderGenericParameterMatches,
 						TraceFilesProcessor::getRequestParameterMatchResults),
 				new CheckSpecification(
 						"provider generic response match",
 						Set.of("response_translated"),
-						BridgeDemoTraceFilesProcessor::checkProviderGenericResponseMatches,
+						TraceFilesProcessor::checkProviderGenericResponseMatches,
 						TraceFilesProcessor::getResponseMatchResults),
 				new CheckSpecification(
 						"provider generic metadata match",
 						Set.of("response_translated", "metadata_translated"),
-						BridgeDemoTraceFilesProcessor::checkProviderGenericMetadataMatches,
+						TraceFilesProcessor::checkProviderGenericMetadataMatches,
 						TraceFilesProcessor::getMetadataMatchResults),
 				new CheckSpecification(
 						"expected prompts", request,
-						BridgeDemoTraceFilesProcessor::checkExpectedPrompts,
+						TraceFilesProcessor::checkExpectedPrompts,
 						TraceFilesProcessor::getExpectedInputMatchResults),
 				new CheckSpecification(
 						"provider generic image comparison", request,
-						BridgeDemoTraceFilesProcessor::checkProviderGenericImagesMatch,
+						TraceFilesProcessor::checkProviderGenericImagesMatch,
 						TraceFilesProcessor::getExpectedInputMatchResults),
 				new CheckSpecification(
 						"expected generic image comparison", request,
-						BridgeDemoTraceFilesProcessor::checkExpectedGenericImagesMatch,
+						TraceFilesProcessor::checkExpectedGenericImagesMatch,
 						TraceFilesProcessor::getExpectedInputMatchResults),
 				new CheckSpecification(
 						"context window continuity", request,
-						BridgeDemoTraceFilesProcessor::checkContextWindowContinuity,
+						TraceFilesProcessor::checkContextWindowContinuity,
 						TraceFilesProcessor::getContextWindowContinuityResults),
 				new CheckSpecification(
 						"cross-provider request structure", request,
-						BridgeDemoTraceFilesProcessor::checkProviderIndependentNonStreamingRequestsMatchAcrossProviders,
+						TraceFilesProcessor::checkProviderIndependentNonStreamingRequestsMatchAcrossProviders,
 						TraceFilesProcessor::getProviderIndependentNonStreamingMatchResults),
 				new CheckSpecification(
 						"cross-provider response structure", response,
-						BridgeDemoTraceFilesProcessor::checkProviderIndependentNonStreamingResponsesMatchAcrossProviders,
+						TraceFilesProcessor::checkProviderIndependentNonStreamingResponsesMatchAcrossProviders,
 						TraceFilesProcessor::getProviderIndependentNonStreamingMatchResults),
 				new CheckSpecification(
 						"streaming response in next context window", streamingMerge,
-						BridgeDemoTraceFilesProcessor::checkStreamingChunksReflectedInNextContextWindow,
+						TraceFilesProcessor::checkStreamingChunksReflectedInNextContextWindow,
 						TraceFilesProcessor::getStreamingChunkContextWindowMatchResults),
 				new CheckSpecification(
 						"streaming chunks accumulated correctly",
 						Set.of("streaming_chunk_accumulated", "streaming_chunks_merged"),
-						BridgeDemoTraceFilesProcessor::checkStreamingChunksAccumulatedCorrectly,
+						TraceFilesProcessor::checkStreamingChunksAccumulatedCorrectly,
 						TraceFilesProcessor::getStreamingChunkAccumulationResults),
 				new CheckSpecification(
 						"partial response callback",
 						Set.of("provider_streaming_chunk_received",
 								"partial_response_callback_invoked"),
-						BridgeDemoTraceFilesProcessor::checkPartialResponseCallbacksInvoked,
+						TraceFilesProcessor::checkPartialResponseCallbacksInvoked,
 						TraceFilesProcessor::getStreamingCallbackInvocationResults),
 				new CheckSpecification(
 						"complete response callback",
 						Set.of("streaming_chunks_merged",
 								"complete_response_callback_invoked"),
-						BridgeDemoTraceFilesProcessor::checkCompleteResponseCallbacksInvoked,
+						TraceFilesProcessor::checkCompleteResponseCallbacksInvoked,
 						TraceFilesProcessor::getStreamingCallbackInvocationResults));
+	}
+
+	private TraceFilesProcessor processor(Path directory,
+			GenericTracesFileProcessor.ExpectedInputs expectedInputs) {
+		BridgeDemoTraceInformation information = new BridgeDemoTraceInformation(directory);
+		var processor = new NativeTraceFilesProcessor(information.traceFiles(), java.util.Objects.requireNonNull(expectedInputs));
+        processor.setExpectedContentChecks(new eduAI.trace.processors.assignment1.BridgeDemoContentChecks(processor));
+        return processor;
 	}
 
 	private void assertSameVerdictWithOnlyRequiredEvents(
 			TraceDataset aDataset,
 			CheckSpecification aSpecification,
 			Path aFilteredDirectory) {
-		BridgeDemoTraceFilesProcessor completeProcessor =
-				new BridgeDemoTraceFilesProcessor(
+		TraceFilesProcessor completeProcessor =
+				processor(
 						aDataset.directory(),
 						aDataset.expectedInputs());
-		BridgeDemoTraceFilesProcessor filteredProcessor =
-				new BridgeDemoTraceFilesProcessor(
+		TraceFilesProcessor filteredProcessor =
+				processor(
 						aFilteredDirectory,
 						aDataset.expectedInputs());
 		TraceCheckResult completeResult =
@@ -259,9 +267,9 @@ public class TraceCheckDependencyTest {
 		TraceCheckResult filteredResult =
 				aSpecification.checkCall().check(filteredProcessor);
 		List<Boolean> completeDetails = aSpecification.resultProbe().results(
-				completeProcessor.getProcessor());
+				completeProcessor);
 		List<Boolean> filteredDetails = aSpecification.resultProbe().results(
-				filteredProcessor.getProcessor());
+				filteredProcessor);
 		if (completeResult.passed() != filteredResult.passed()
 				|| !completeDetails.equals(filteredDetails)) {
 			throw new AssertionError(

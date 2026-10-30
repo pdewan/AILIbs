@@ -16,6 +16,25 @@ import eduAI.trace.TraceLine;
 import eduAI.trace.TraceLineParser;
 
 public class TraceFixtureMutator {
+	private final List<String> traceFileNames;
+
+	public TraceFixtureMutator() { this(TraceFixtureFilter.TRACE_FILE_NAMES); }
+
+	public TraceFixtureMutator(List<String> traceFileNames) {
+		this.traceFileNames = List.copyOf(traceFileNames);
+	}
+
+	/** Events available in this dataset, using the same files as mutation generation. */
+	public java.util.Set<String> presentEventNames(Path directory) throws IOException {
+		java.util.Set<String> events = new java.util.HashSet<>();
+		for (String fileName : traceFileNames) {
+			try (var lines = Files.lines(directory.resolve(fileName), StandardCharsets.UTF_8)) {
+				lines.map(TraceLineParser::parse).filter(java.util.Objects::nonNull)
+					.map(TraceLine::getEventName).filter(java.util.Objects::nonNull).forEach(events::add);
+			}
+		}
+		return java.util.Set.copyOf(events);
+	}
 	public enum MutationKind {
 		REMOVE_EVENT,
 		CHANGE_FIELD_VALUE,
@@ -197,7 +216,7 @@ public class TraceFixtureMutator {
 			changedLines.put(mutation, 0);
 		}
 
-		for (String fileName : TraceFixtureFilter.TRACE_FILE_NAMES) {
+		for (String fileName : traceFileNames) {
 			Path source = aSourceDirectory.resolve(fileName);
 			if (!Files.isRegularFile(source)) {
 				throw new IOException("Required trace file is missing: " + source);

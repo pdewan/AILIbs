@@ -44,8 +44,10 @@ public final class CompactPromptMutationTest {
 				}
 				if (changes == 0) throw new AssertionError("Mutation did not change compact evidence: " + target);
 				Files.write(target.resolve(name), lines);
-				BridgeDemoTraceFilesProcessor processor = new BridgeDemoTraceFilesProcessor();
-				processor.setTraceDirectory(target.toString());
+				BridgeDemoTraceInformation information = new BridgeDemoTraceInformation(target);
+				TraceFilesProcessor processor = new NativeTraceFilesProcessor(
+						information.traceFiles(), information.expectedInputs());
+                processor.setExpectedContentChecks(new eduAI.trace.processors.assignment1.BridgeDemoContentChecks((GenericTracesFileProcessor) processor));
 				processor.processTraceFiles();
 				TraceCheckResult result = switch (mutation) {
 					case "system-history" -> processor.checkPreviousSystemPromptsRetained(provider);
