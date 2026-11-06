@@ -136,17 +136,9 @@ public final class CLICommandResultChecks {
     }
 
     private static List<String> completedResponses(List<TraceRecord> records) {
-        Map<String, List<String>> byModel = new LinkedHashMap<>();
-        String model = "";
-        for (var record : records) {
-            if (record.getExtractedData().get("providerIndependentCanonicalRequest") instanceof CanonicalTraceRequest request)
-                model = request.model();
-            if (record.getExtractedData().get("providerIndependentCanonicalResponse") instanceof CanonicalTraceResponse response) {
-                var texts = response.messages().stream().flatMap(message -> message.parts().stream())
-                        .filter(part -> "text".equals(part.kind())).map(part -> part.value()).filter(text -> !text.isBlank()).toList();
-                if (!texts.isEmpty()) byModel.put(model, texts);
-            }
-        }
-        return byModel.values().stream().flatMap(List::stream).toList();
+        var completed = CompletedResponseEvidence.select(records);
+        if (!completed.complete()) return List.of();
+        return completed.messages().stream().flatMap(message -> message.parts().stream())
+                .filter(part -> "text".equals(part.kind())).map(part -> part.value()).toList();
     }
 }

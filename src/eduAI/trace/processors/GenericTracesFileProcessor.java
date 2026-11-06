@@ -1961,7 +1961,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	private void handleStreamingChunksMerged(TraceRecord aTraceRecord) {
 		attachAuxiliaryExtractedData(aTraceRecord);
 		aTraceRecord.putExtractedData(
-				"mergedMessageStructure",
+				CompletedResponseEvidence.MERGED_MESSAGE,
 				firstCanonicalMessageFromArgument(aTraceRecord, "mergedMessage"));
 		tagClassesInsideTrace(aTraceRecord);
 	}
@@ -2565,7 +2565,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			}
 			if ("streaming_chunks_merged".equals(event)) {
 				result = (TraceMessage) candidate.getExtractedData()
-						.get("mergedMessageStructure");
+						.get(CompletedResponseEvidence.MERGED_MESSAGE);
 			}
 		}
 		return result;
@@ -2863,14 +2863,14 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			String eventName = record.getTraceLine().getEventName();
 			Map<String, String> data = record.getTraceLine().getAuxiliaryData();
 			if ("streaming_chunks_merged".equals(eventName)) {
-				TraceMessage mergedMessage = (TraceMessage) record.getExtractedData().get("mergedMessageStructure");
+				TraceMessage mergedMessage = (TraceMessage) record.getExtractedData().get(CompletedResponseEvidence.MERGED_MESSAGE);
 				if (mergedMessage != null && "SYSTEM".equals(mergedMessage.role())
 						&& !data.containsKey("streamHashId")) continue;
 				if (data.containsKey("streamTextEvidenceVersion")) {
 					String id = data.get("streamHashId");
 					TraceTextSummary expected = TraceTextSummary.parse(data.get("expectedMergedTextSummary"));
 					TraceTextSummary actual = TraceTextSummary.parse(data.get("mergedTextSummary"));
-					TraceMessage merged = (TraceMessage) record.getExtractedData().get("mergedMessageStructure");
+					TraceMessage merged = (TraceMessage) record.getExtractedData().get(CompletedResponseEvidence.MERGED_MESSAGE);
 					boolean match = "1".equals(data.get("streamTextEvidenceVersion"))
 							&& "complete".equals(data.get("streamTextHashStatus"))
 							&& expected != null && expected.equals(previousHashes.get(id)) && expected.equals(actual)
@@ -3067,7 +3067,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return nearestPrecedingMessage(
 				aCallbackRecord,
 				someMergedRecords,
-				"mergedMessageStructure");
+				CompletedResponseEvidence.MERGED_MESSAGE);
 	}
 
 	private TraceMessage nearestPrecedingMessage(
@@ -3659,7 +3659,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 						.getAuxiliaryData().get("expectedMergedTextSummary"));
 				TraceMessage merged =
 						(TraceMessage) record.getExtractedData()
-								.get("mergedMessageStructure");
+								.get(CompletedResponseEvidence.MERGED_MESSAGE);
 				if (isAssistantTextMessage(merged)
 						&& !chunkTexts.isEmpty()) {
 					result.add(
@@ -4617,17 +4617,18 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			for (String role : List.of("SYSTEM", "USER", "ASSISTANT")) {
 				List<TraceMessage> expected = new ArrayList<>(before.contextWindow().stream()
 						.filter(m -> role.equals(standardRole(m.role()))).toList());
-				if ("ASSISTANT".equals(role)) {
-					for (TraceRecord r : traceRecords.values()) {
-						if (r.getId().sequenceNumber() <= previous.getId().sequenceNumber()
-								|| r.getId().sequenceNumber() >= current.getId().sequenceNumber()) continue;
-						var response = (CanonicalTraceResponse) r.getExtractedData().get("providerIndependentCanonicalResponse");
-						if (response != null) expected.addAll(response.messages());
-					}
-				}
-				if (expected.isEmpty()) continue;
+                boolean completionPresent = true;
+                if ("ASSISTANT".equals(role)) {
+                    var interval = traceRecords.values().stream().filter(r ->
+                        r.getId().sequenceNumber() >= previous.getId().sequenceNumber()
+                        && r.getId().sequenceNumber() < current.getId().sequenceNumber()).toList();
+                    var completed = CompletedResponseEvidence.select(interval);
+                    expected.addAll(completed.messages());
+                    completionPresent = completed.complete();
+                }
+                if (expected.isEmpty() && completionPresent) continue;
 				List<TraceMessage> remaining = new ArrayList<>(after.contextWindow());
-				boolean retained = true;
+				boolean retained = completionPresent;
 				int from = 0;
 				for (TraceMessage message : expected) {
 					int found = -1;
