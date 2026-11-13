@@ -49,7 +49,21 @@ public final class CLIPropertyConsistencyTest {
                 for(var rule:List.of(Check.HANDLER_REUSE,Check.DISTINCT_HANDLERS,Check.GETTERS,Check.STORE,Check.STORE_IDENTITY,Check.RESULT_TYPES,Check.ALTERNATIVES))
                     require(check(rule,oneCommand).level3ErrorMessages().stream().anyMatch(e->e.startsWith(CLIPropertyConsistencyChecks.INSUFFICIENT)),"Insufficient evidence not reported: "+rule);
             }
-            System.out.println("CLIPropertyConsistencyTest passed "+assertions+" assertions; two independent sessions, no I/O files");
+            // Null explicitly declares an unrestricted domain; absent fields,
+            // required boolean/model domains, and configured restrictions do not.
+            Path nullable=directory.resolve("null-unrestricted.txt");
+            write(nullable,17,Set.of("timeout","top_k"));
+            require(check(Check.ALTERNATIVES,read(nullable)).passed(),"Unrestricted null alternatives rejected");
+            var restricted=new HashMap<>(TYPES);
+            restricted.put("top_k",new CLIPropertyDescriptor(ValueType.INTEGER,List.of("17")));
+            require(!CLIPropertyConsistencyChecks.check(Check.ALTERNATIVES,read(nullable),
+                    CLIPropertyCheckerRegistry.fromDescriptors(restricted)).passed(),"Restricted null alternatives accepted");
+            for(String name:List.of("stream","current_models")) {
+                Path mutant=directory.resolve("null-required-"+name+".txt");
+                write(mutant,17,Set.of(name));
+                require(!check(Check.ALTERNATIVES,read(mutant)).passed(),"Required null choices accepted: "+name);
+            }
+            System.out.println("CLIPropertyConsistencyTest passed "+assertions+" assertions; independent sessions and null-domain mutations, no I/O files");
         } finally { GenericTrace.clearTraceFile(); GenericTrace.setEnabled(enabled); GenericTrace.setOutputEnabled(output); }
     }
     private static TraceCheckResult check(Check check,Collection<TraceRecord> records) {
@@ -59,6 +73,9 @@ public final class CLIPropertyConsistencyTest {
         var processor=new NativeTraceFilesProcessor(path); processor.processTraceFiles(); return processor.getTraceRecords().values();
     }
     private static void write(Path path,int integer) {
+        write(path,integer,Set.of());
+    }
+    private static void write(Path path,int integer,Set<String> nullChoices) {
         GenericTrace.setTraceFile(path);
         Object caller=new Object(),dispatcher=new Object(),commandHandler=new Object();
         Map<String,Object> handlers=new LinkedHashMap<>(),store=new LinkedHashMap<>();
@@ -71,6 +88,7 @@ public final class CLIPropertyConsistencyTest {
             Object value=switch(name) { case "current_models"->List.of("model-"+integer); case "stream"->Boolean.TRUE; default->integer; };
             String type=switch(name) { case "current_models"->"selection"; case "stream"->"flag"; default->"quantity"; };
             List<String> alternatives=switch(name) { case "current_models"->List.of("model-"+integer,"another-model"); case "stream"->List.of("true","false"); default->List.of(); };
+            if(nullChoices.contains(name)) alternatives=null;
             if(setter) store.put(name,value);
             var result=new Result(type,alternatives);
             MinimalCLITrace.propertyHandled(caller,name,registry,handlers.get(name),result,store,value);

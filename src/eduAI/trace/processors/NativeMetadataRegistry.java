@@ -8,8 +8,6 @@ import java.util.regex.Pattern;
 
 /** Extracts native metadata values without prescribing generic property names. */
 public class NativeMetadataRegistry {
-	private static final Pattern DURATION_DUMP = Pattern.compile(
-			"^[^:]+: java\\.time\\.Duration interfaces=\\[[^]]*\\] toString=\"([^\"]+)\"$");
 	private final Map<String, Function<String, String>> extractors = new LinkedHashMap<>();
 	private final Map<String, String> meanings = new LinkedHashMap<>();
 
@@ -29,7 +27,7 @@ public class NativeMetadataRegistry {
 		var matches = new java.util.LinkedHashSet<String>();
 		if (source != null) extractors.forEach((key, extractor) -> {
 			String value = extractor.apply(source);
-			if (value != null && value.equals(durationValue(actual))) matches.add(meanings.get(key));
+			if (value != null && value.equals(DurationTraceValue.normalized(actual))) matches.add(meanings.get(key));
 		});
 		return matches;
 	}
@@ -49,19 +47,8 @@ public class NativeMetadataRegistry {
 			if (value != null) values.add(value);
 		}
 		if (values.isEmpty()) return "native metadata values absent or unreadable";
-		return values.contains(durationValue(actual)) ? null
+		return values.contains(DurationTraceValue.normalized(actual)) ? null
 				: "translated metadata value absent from native metadata; actual=" + actual;
-	}
-
-	private static String durationValue(String actual) {
-		if (actual == null) return null;
-		Matcher dump = DURATION_DUMP.matcher(actual);
-		String value = dump.matches() ? dump.group(1) : actual;
-		try {
-			return java.time.Duration.parse(value).toString();
-		} catch (java.time.format.DateTimeParseException e) {
-			return actual;
-		}
 	}
 
 	/** Compatibility overload; key is diagnostic information, never a matching rule. */

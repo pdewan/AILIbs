@@ -12,7 +12,42 @@ public final class CLISixCallChecks {
      * unknown default getters in snapshot checks; STREAMS leaves nonstreaming
      * request contents undecoded. Missing consumed evidence still fails. */
     public enum Evidence { PROPERTIES, SETTERS, REQUESTS, STREAMS, ATTACHMENTS }
+    private static final Set<String> COMMAND_DELIVERY_RULES=Set.of("result-delivery","display-count",
+        "notification-count","notification-order","notification-result",CLIObserverSeparationChecks.COMMAND_SEPARATION);
+    private static final Set<String> STREAM_DELIVERY_RULES=Set.of(MinimalCLIContractChecks.STREAM_NOTIFICATION,
+        CLIObserverSeparationChecks.STREAM_SEPARATION);
+    private static final Set<String> COMMAND_AGREEMENT_RULES=Set.of("command-io","display-count");
+    private static final Set<String> STREAM_AGREEMENT_RULES=Set.of("stream-sequence","stream-io");
     private CLISixCallChecks() { }
+    /** The full contract retains both independently graded dimensions. */
+    public static Set<String> observerRules(boolean streaming) {
+        var rules=new HashSet<>(streaming ? STREAM_DELIVERY_RULES : COMMAND_DELIVERY_RULES);
+        rules.addAll(streaming ? STREAM_AGREEMENT_RULES : COMMAND_AGREEMENT_RULES);
+        return Set.copyOf(rules);
+    }
+    /** Delivery uses only traced returns, notifications and receipts. It does not
+     * need a console capture to establish that the notified object was received. */
+    public static TraceCheckResult notificationDelivery(Collection<TraceRecord> records, boolean streaming) {
+        var ordered=records.stream().sorted(Comparator.comparingInt(TraceRecord::getTraceFileLineNumber)).toList();
+        Map<Integer,String> commands=new LinkedHashMap<>();
+        for(var record:ordered) if(CLITraceEvidence.is(record,MinimalCLITrace.Event.COMMAND_HANDLED))
+            commands.put(CLITraceEvidence.number(record.getTraceLine().getAuxiliaryData()),CLITraceEvidence.commandName(record));
+        Set<String> selected=streaming ? STREAM_DELIVERY_RULES : COMMAND_DELIVERY_RULES;
+        var expected=new Expectations(commands,List.of(),List.of(),Map.of(),List.of(),List.of());
+        var errors=new ArrayList<>(MinimalCLIContractChecks.check(ordered.stream().map(TraceRecord::getTraceLine).toList(),expected,selected)
+            .stream().filter(f->selected.contains(f.check())).map(f->f.check()+": "+f.detail()).toList());
+        if(streaming && ordered.stream().noneMatch(r->CLITraceEvidence.is(r,MinimalCLITrace.Event.STREAM_OUTPUT_NOTIFIED)))
+            errors.add("Insufficient evidence: no streaming notifications to compare");
+        return new TraceCheckResult(List.of(),List.of(),errors);
+    }
+
+    /** File/display agreement is scored independently of notification delivery.
+     * Streaming also retains the original callback identity, ordering and text
+     * comparisons; regular command result semantics are checked elsewhere. */
+    public static TraceCheckResult outputAgreement(Collection<TraceRecord> records, CLIMixedIO io, Path directory, boolean streaming) {
+        return check(records,io,directory,streaming ? STREAM_AGREEMENT_RULES : COMMAND_AGREEMENT_RULES,
+            streaming ? Set.of(Evidence.STREAMS) : Set.of());
+    }
     public static List<Finding> findings(Collection<TraceRecord> records, CLIMixedIO io, Path directory) {
         return findings(records, io, directory, EnumSet.allOf(Evidence.class),null);
     }
@@ -78,7 +113,7 @@ public final class CLISixCallChecks {
                 } else if(needed.contains(Evidence.STREAMS) && (event.equals(
                         eduAI.trace.lib.LibTraceEvent.PARTIAL_RESPONSE_CALLBACK_INVOKED.name().toLowerCase(Locale.ROOT))
                         || event.equals(eduAI.trace.lib.LibTraceEvent.COMPLETE_RESPONSE_CALLBACK_INVOKED.name().toLowerCase(Locale.ROOT))
-                            && completionNotified(record,active,model,ordered))) {
+                            && completionObserved(record,active,model,ordered,selected))) {
                     if(active==null) throw new IllegalArgumentException("A1 callback has no request");
                     if(!activeStreaming) throw new IllegalArgumentException("A1 streaming callback belongs to a nonstreaming request");
                     if(!(record.getExtractedData().get("callbackArgumentStructure") instanceof GenericTracesFileProcessor.TraceMessage message))
@@ -89,7 +124,7 @@ public final class CLISixCallChecks {
                         : message.parts().stream().filter(p->"text".equals(p.kind()))
                             .map(GenericTracesFileProcessor.TracePart::value).reduce("",String::concat);
                     streams.add(new Stream(active.number(),model,text,
-                        eduAI.trace.TraceTextSummary.fromToken(text)==null ? streamOutput(model,text) : null,
+                        eduAI.trace.TraceTextSummary.fromToken(text)==null ? CLIOutputSyntax.streamOutput(model,text) : null,
                         record.getTraceLine().getAuxiliaryData().get(eduAI.trace.lib.LibTraceKeys.CALLBACK_ARGUMENT_IDENTITY)));
                     callbackLines.add(record.getTraceFileLineNumber());
                 }
@@ -105,20 +140,21 @@ public final class CLISixCallChecks {
                 if (displayed.get(i).getTraceFileLineNumber()<=callbackLines.get(i))
                     errors.add(new Finding("stream-sequence","Display precedes its callback at "+i));
                 // Content is recovered from printed I/O, never decoded from a student result object.
-                String printed=data.getOrDefault(MinimalCLITrace.OUTPUT,"").replace("\r\n","\n");
-                String marker="@@STREAM["+wanted.model()+"] ";
-                boolean syntax=Arrays.stream(printed.split("\n",-1)).allMatch(line->line.startsWith(marker));
-                String text=syntax ? String.join("\n",Arrays.stream(printed.split("\n",-1))
-                    .map(line->line.substring(marker.length())).toList()) : "";
-                if(!syntax || !eduAI.trace.TraceTextSummary.matches(wanted.text(),text))
-                    errors.add(new Finding("stream-io","Printed text differs from A1 callback at "+i));
+                String printed=data.getOrDefault(MinimalCLITrace.OUTPUT,"");
+                try {
+                    String text = CLIOutputSyntax.streamText(wanted.model(), printed);
+                    if (!eduAI.trace.TraceTextSummary.matches(wanted.text(), text))
+                        errors.add(new Finding("stream-io", "Printed text differs from A1 callback at " + i));
+                } catch (IllegalArgumentException error) {
+                    errors.add(new Finding("stream-io", "Malformed streaming output at " + i + ": " + error.getMessage()));
+                }
             }
             // Compare captured streaming lines too; chunks may contain more than one printed line.
             for(var entry:io.entries()) {
                 var actual=ordered.stream().filter(r->CLITraceEvidence.is(r,MinimalCLITrace.Event.STREAM_DISPLAYED))
                     .map(r->r.getTraceLine().getAuxiliaryData()).filter(d->CLITraceEvidence.number(d)==entry.number())
-                    .flatMap(d->d.getOrDefault(MinimalCLITrace.OUTPUT,"").replace("\r\n","\n").lines()).toList();
-                var captured=entry.chunks().stream().map(c->streamOutput(c.model(),c.text())).toList();
+                    .flatMap(d->CLIOutputSyntax.streamRecord(d.getOrDefault(MinimalCLITrace.OUTPUT,"")).lines()).toList();
+                var captured=entry.chunks().stream().map(c->CLIOutputSyntax.streamOutput(c.model(),c.text())).toList();
                 if(!actual.equals(captured)) errors.add(new Finding("stream-io","Streaming I/O differs for "+entry.number()));
             }
             }
@@ -127,12 +163,16 @@ public final class CLISixCallChecks {
             return List.of(new Finding("expectations","Cannot establish six-call expectations: "+e.getMessage()));
         }
     }
-    /** Only an explicit notification makes an optional completion relevant to delivery. */
-    private static boolean completionNotified(TraceRecord callback,CLIMixedIO.Entry active,String model,List<TraceRecord> records) {
+    /** The combined contract consumes announced completions. Independently
+     * scored output agreement consumes displayed completions, so missing
+     * notification evidence cannot change its callback expectations. */
+    private static boolean completionObserved(TraceRecord callback,CLIMixedIO.Entry active,String model,List<TraceRecord> records,Set<String> selected) {
         if(active==null) return false;
         String identity=callback.getTraceLine().getAuxiliaryData().get(eduAI.trace.lib.LibTraceKeys.CALLBACK_ARGUMENT_IDENTITY);
         if(identity==null) return false;
-        return records.stream().filter(r->CLITraceEvidence.is(r,MinimalCLITrace.Event.STREAM_OUTPUT_NOTIFIED))
+        var event=selected==null || selected.contains(MinimalCLIContractChecks.STREAM_NOTIFICATION)
+            ? MinimalCLITrace.Event.STREAM_OUTPUT_NOTIFIED : MinimalCLITrace.Event.STREAM_DISPLAYED;
+        return records.stream().filter(r->CLITraceEvidence.is(r,event))
             .map(r->r.getTraceLine().getAuxiliaryData()).anyMatch(data->CLITraceEvidence.number(data)==active.number()
                 && Objects.equals(model,data.get(MinimalCLITrace.MODEL))
                 && identity.equals(data.get(MinimalCLITrace.CHUNK+eduAI.trace.cli.TraceDataPaths.ID)));
@@ -150,9 +190,6 @@ public final class CLISixCallChecks {
             else if (c=='|') return true;
         }
         return false;
-    }
-    private static String streamOutput(String model,String text) {
-        return "@@STREAM["+model+"] "+text.replace("\r\n","\n").replace("\n","\n@@STREAM["+model+"] ");
     }
     private static String scalar(Object value) {
         if(value instanceof List<?> list) {

@@ -22,9 +22,8 @@ public final class CLIArchitectureChecks {
                 case HANDLERS -> Set.of("participant-identity","registry-current","registry-association","registry-reuse","handler-reuse","command-count","command-order","dispatcher-identity");
                 case MODELS -> Set.of("type-field","choices-field","property-result","property-result-handler");
                 case STORE -> Set.of("property-value","property-count","property-order","store-values","store-identity");
-                case COMMAND_OUTPUT -> Set.of("result-delivery","command-io","display-count",
-                    "notification-count","notification-order","notification-result",CLIObserverSeparationChecks.COMMAND_SEPARATION);
-                case STREAM_OUTPUT -> Set.of(MinimalCLIContractChecks.STREAM_NOTIFICATION, "stream-sequence","stream-io",CLIObserverSeparationChecks.STREAM_SEPARATION);
+                case COMMAND_OUTPUT -> CLISixCallChecks.observerRules(false);
+                case STREAM_OUTPUT -> CLISixCallChecks.observerRules(true);
                 case FILE_CONTENTS -> Set.of("attachment-count","attachment-content");
                 case TEXT_FILE_CONTENTS, IMAGE_FILE_CONTENTS -> throw new IllegalStateException("Kind-specific checks must run directly");
                 case FILE_SEPARATION -> Set.of("expander-reuse","expander-instances");

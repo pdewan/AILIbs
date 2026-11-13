@@ -51,25 +51,7 @@ public class NativeTraceFilesProcessor extends GenericTracesFileProcessor {
 	}
 
 	private void registerNativeProviderParameterCheckers() {
-		for (String timeoutName : List.of(eduAI.properties.AIPropertyNames.TIMEOUT, "timeout_milliseconds")) {
-			registerProviderParameterChecker(
-					new TextProviderParameterChecker(
-							"Gemini", timeoutName, "HttpOptions$Builder", "timeout=Optional["));
-			registerProviderParameterChecker(
-					new TextProviderParameterChecker(
-							"Ollama", timeoutName, "io.github.ollama4j.Ollama", "requestTimeoutSeconds"));
-		}
-		registerProviderParameterChecker(
-				new TextProviderParameterChecker(
-						"Gemini",
-						eduAI.properties.AIPropertyNames.TEMPERATURE,
-						"GenerateContentConfig$Builder",
-						"temperature=Optional["));
-		registerProviderParameterChecker(
-				new TextProviderParameterChecker(
-						"Ollama",
-						eduAI.properties.AIPropertyNames.TEMPERATURE,
-						"Options",
-						"temperature="));
+		registerProviderParameterChecker(new NativeParameterValues(TraceProviderNames.GEMINI));
+		registerProviderParameterChecker(new NativeParameterValues(TraceProviderNames.OLLAMA));
 	}
 }

@@ -59,6 +59,18 @@ public class ReflectiveValueCollector {
 		Set<Integer> excluded = someExcludedOffsets == null
 				? new HashSet<>()
 				: someExcludedOffsets;
+		java.time.Duration duration = DurationTraceValue.fromDump(anExpectedValue);
+		if (duration != null) {
+			String unquoted = maskQuotedText(aDump);
+			Matcher values = DurationTraceValue.DUMP.matcher(aDump);
+			while (values.find()) {
+				// A typed dump inside a String or descriptive toString is not a stored Duration.
+				if (!Character.isWhitespace(unquoted.charAt(values.start()))
+						&& !excluded.contains(values.start())
+						&& duration.equals(DurationTraceValue.parse(values.group(1)))) return values.start();
+			}
+			return -1;
+		}
 		int searchFrom = 0;
 		while (true) {
 			int marker = aDump.indexOf(VALUE_MARKER, searchFrom);

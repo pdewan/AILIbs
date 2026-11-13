@@ -95,7 +95,7 @@ public final class CLIPropertyConsistencyChecks {
             case GETTERS -> { if (comparisons==0) errors.add(INSUFFICIENT+"no setter followed by a getter for the same property"); }
             case STORE_IDENTITY -> { if (rows.size()<MINIMUM_COMPARABLE_OBSERVATIONS) errors.add(INSUFFICIENT+"fewer than two store observations"); }
             case RESULT_TYPES -> types(rows,contracts,errors);
-            case ALTERNATIVES -> alternatives(rows,errors);
+            case ALTERNATIVES -> alternatives(rows,errors,contracts);
             default -> { }
         }
         return new TraceCheckResult(List.of(),List.of(),errors);
@@ -116,12 +116,17 @@ public final class CLIPropertyConsistencyChecks {
                 errors.add("Missing or invalid property result identity: "+name);
         }
         if (groups.size()<MINIMUM_COMPARABLE_OBSERVATIONS || groups.values().stream().noneMatch(names->names.size()>1))
-            errors.add(INSUFFICIENT+"need different type groups and distinct properties of a shared type");
+            errors.add(INSUFFICIENT+"need different type groups and distinct properties of a shared type. "
+                + "Observed property groups: " + new TreeMap<>(groups) + ". Exercise two properties of the same configured type "
+                + "and a property of a different type; for example, "
+                + eduAI.properties.AIPropertyNames.TIMEOUT + " and " + eduAI.properties.AIPropertyNames.TOP_K
+                + " (integer), plus " + eduAI.properties.AIPropertyNames.STREAM + " (boolean). "
+                + "This is missing exercise evidence, not a finding that the returned types are wrong.");
         if (CLIPropertyResultFields.typeField(normalized,contracts)==null)
             errors.add("Missing or ambiguous consistent type field");
     }
 
-    private static void alternatives(List<Map<String,String>> rows,List<String> errors) {
+    private static void alternatives(List<Map<String,String>> rows,List<String> errors,CLIPropertyCheckerRegistry contracts) {
         String path=CLIPropertyResultFields.choicesFieldFromSelections(rows,errors);
         if(path==null) return;
         Map<String,List<String>> previous=new HashMap<>();
@@ -129,6 +134,13 @@ public final class CLIPropertyConsistencyChecks {
         for (var row:rows) {
             var choices=CLIPropertyResultFields.choices(row,path);
             String name=row.get(NAME);
+            var contract=contracts.get(name);
+            // Explicit null means no restricted domain, not missing evidence.
+            // Boolean/model domains and configured alternatives must still be supplied.
+            if (choices==null && "true".equals(row.get(path+TraceDataPaths.NULL))
+                    && contract!=null && contract.descriptor().alternatives().isEmpty()
+                    && contract.descriptor().type()!=CLIPropertyDescriptor.ValueType.BOOLEAN
+                    && !eduAI.properties.AIPropertyNames.CURRENT_MODELS.equals(name)) choices=List.of();
             if (choices==null) { errors.add("Missing choices field: "+name); continue; }
             var old=previous.putIfAbsent(name,choices);
             if (old!=null && !choices.isEmpty()) compared=true;

@@ -250,7 +250,13 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	private static final Set<String> REQUEST_PREPARATION_EVENTS = Set.of(
 			"server_handle_factory_fetched", "server_handle_fetched",
 			"message_translated", "parameter_translated", "request_sent");
-	private record SessionPartition(String provider, boolean streaming) { }
+	// A translation immediately after request_sent can still configure that request
+    // before its first response. Never carry it into the following request.
+    private TraceRecord requestAwaitingResponse;
+    private static final Set<String> RESPONSE_EVIDENCE_EVENTS = Set.of(
+        "provider_streaming_chunk_received", "response_translated", "metadata_translated",
+        "partial_response_callback_invoked", "complete_response_callback_invoked", "streaming_result_returned");
+    private record SessionPartition(String provider, boolean streaming) { }
 
 	public record TraceFiles(
 			Path streamingTraceFile,
@@ -493,15 +499,9 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	}
 
 	@Override
-	public void registerProviderParameterChecker(
-			ProviderParameterChecker aChecker) {
-		if (aChecker != null) {
-			providerParameterCheckers.put(
-					parameterCheckerKey(
-							aChecker.providerName(),
-							aChecker.parameterName()),
-					aChecker);
-		}
+	public void registerProviderParameterChecker(ProviderParameterChecker checker) {
+		java.util.Objects.requireNonNull(checker, "Native parameter checker is required");
+		providerParameterCheckers.put(TraceProviderNames.canonical(checker.providerName()), checker);
 	}
 
 	@Override
@@ -714,11 +714,21 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 						+ " mode=" + (sessionFactory ? "SESSION" : mode)
 						+ " count=" + evidence.size()
 						+ " evidence=" + evidence
-						+ " invalidEvidence=" + invalidEvidence);
+						+ " invalidEvidence=" + invalidEvidence
+                        + (passed ? "" : traceEventFailureDetail(anEventName, matchingRecords, invalidEvidence)));
 			}
 		}
 		return traceCheckResult(messages);
 	}
+
+    private String traceEventFailureDetail(String event, List<TraceRecord> matching, List<String> invalid) {
+        if (!matching.isEmpty()) return " detail=Events exist in this provider/mode, but arguments are invalid: " + invalid;
+        var elsewhere = traceRecords.values().stream().filter(r -> event.equals(r.getTraceLine().getEventName()))
+            .map(r -> r.getId().provider() + "/" + r.getId().mode()).distinct().toList();
+        return elsewhere.isEmpty() ? " detail=No such event occurs in the supplied trace evidence"
+            : " detail=No event in the required provider/mode; events exist in other partitions " + elsewhere
+                + ". Check provider/mode association and trace ordering; the event is not globally absent.";
+    }
 
 	private String invalidTraceEventEvidence(TraceRecord record, String event) {
 		String reason = "required trace arguments missing or inconsistent";
@@ -1136,6 +1146,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		errors.clear();
 		pendingTranslatedParameters.clear();
 		pendingParameterEvidence.clear();
+        requestAwaitingResponse = null;
 		pendingTranslatedMetadata.clear();
 		currentResponseTranslationRecord = null;
 		traceFilesProcessed = false;
@@ -1203,6 +1214,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		currentStats = new TraceFileStats();
 		pendingTranslatedParameters.clear();
 		pendingParameterEvidence.clear();
+        requestAwaitingResponse = null;
 		pendingTranslatedMetadata.clear();
 		currentResponseTranslationRecord = null;
 		List<ParsedTraceLine> lines;
@@ -1224,6 +1236,10 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		int sequenceNumber = 0;
 		for (ParsedTraceLine parsedTraceLine : lines) {
 			TraceLine traceLine = parsedTraceLine.traceLine();
+            String event = traceLine.getEventName();
+            if (RESPONSE_EVIDENCE_EVENTS.contains(event)
+                    || REQUEST_PREPARATION_EVENTS.contains(event) && !"parameter_translated".equals(event)
+                        && !"request_sent".equals(event)) requestAwaitingResponse = null;
 			if (sessionTraceFile != null) {
 				adoptSessionContext(traceLine, upcomingModes[sequenceNumber]);
 			}
@@ -1293,8 +1309,10 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 					line.getAuxiliaryData().get("serverHandleFactoryIdentity"));
 			if (!isBlank(provider)) currentProvider = provider;
 		}
-		// Translation/setup events precede the request whose mode they belong to.
-		if (REQUEST_PREPARATION_EVENTS.contains(event) && upcomingMode != null) {
+		// Setup normally belongs to the upcoming request. A parameter applied after
+        // request_sent but before its first response keeps that active request's mode.
+		if (REQUEST_PREPARATION_EVENTS.contains(event) && upcomingMode != null
+                && !("parameter_translated".equals(event) && requestAwaitingResponse != null)) {
 			currentTraceIsStreaming = upcomingMode == StreamingMode.STREAMING;
 		}
 	}
@@ -1677,6 +1695,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 	}
 
 	private void handleRequestSent(TraceRecord aTraceRecord) {
+        requestAwaitingResponse = aTraceRecord;
 		currentStats.requestSent = true;
 		currentResponseTranslationRecord = null;
 		pendingTranslatedMetadata.clear();
@@ -1713,7 +1732,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 				canonicalMessageKeys(
 						providerDependentRequestStructure(aTraceRecord)));
 		aTraceRecord.putExtractedData(
-				"translatedParameterEvidence",
+				RequestTraceFields.PARAMETER_TRANSLATIONS,
 				List.copyOf(pendingParameterEvidence));
 		pendingTranslatedParameters.clear();
 		pendingParameterEvidence.clear();
@@ -1787,20 +1806,25 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		attachAuxiliaryExtractedData(aTraceRecord);
 		Map<String, String> auxiliaryData =
 				aTraceRecord.getTraceLine().getAuxiliaryData();
-		putCanonicalProperty(
-				pendingTranslatedParameters,
-				auxiliaryData.get("propertyName"),
-				auxiliaryData.get("propertyValue"));
-		String handlerClass = loadableClassName(
-				auxiliaryData.get("parameterHandlerClass"),
-				auxiliaryData.get("parameterHandler"));
-		pendingParameterEvidence.add(
-				new ProviderParameterChecker.ParameterEvidence(
-						auxiliaryData.get("propertyName"),
-						auxiliaryData.get("propertyValue"),
-						handlerClass,
-						auxiliaryData.get("providerDependentTarget"),
-						auxiliaryData.get("providerDependentTargetState")));
+        var evidence = new ProviderParameterChecker.ParameterEvidence(
+            auxiliaryData.get("propertyValue"), auxiliaryData.get("providerDependentTarget"),
+            auxiliaryData.get("providerDependentTargetState"));
+        if (requestAwaitingResponse == null) {
+            putCanonicalProperty(pendingTranslatedParameters, auxiliaryData.get("propertyName"), auxiliaryData.get("propertyValue"));
+            pendingParameterEvidence.add(evidence);
+        } else {
+            var request = (CanonicalTraceRequest) requestAwaitingResponse.getExtractedData().get("providerDependentCanonicalRequest");
+            var parameters = new LinkedHashMap<>(request.parameters());
+            putCanonicalProperty(parameters, auxiliaryData.get("propertyName"), auxiliaryData.get("propertyValue"));
+            requestAwaitingResponse.putExtractedData("providerDependentCanonicalRequest",
+                new CanonicalTraceRequest(request.model(), parameters, request.contextWindow()));
+            @SuppressWarnings("unchecked")
+            var previous = (List<ProviderParameterChecker.ParameterEvidence>) requestAwaitingResponse.getExtractedData().get(RequestTraceFields.PARAMETER_TRANSLATIONS);
+            var updated = new ArrayList<>(previous);
+            updated.add(evidence);
+            requestAwaitingResponse.putExtractedData(RequestTraceFields.PARAMETER_TRANSLATIONS, List.copyOf(updated));
+        }
+        String handlerClass = loadableClassName(auxiliaryData.get("parameterHandlerClass"), auxiliaryData.get("parameterHandler"));
 		add(
 				handlerClass,
 				currentProvider + "ParameterAdapter",
@@ -2374,8 +2398,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 			String aProvider,
 			StreamingMode aMode) {
 		for (TraceRecord record : requestRecords(aProvider, aMode)) {
-			String difference = parameterEvidenceDifference(
-					aProvider, aMode, record);
+			String difference = parameterEvidenceDifference(aProvider, record);
 			boolean matches = difference.isEmpty();
 			requestParameterMatchResults.add(matches);
 			record.putExtractedData(
@@ -2657,186 +2680,10 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		return null;
 	}
 
-	@SuppressWarnings("unchecked")
-	private String parameterEvidenceDifference(
-			String aProvider,
-			StreamingMode aMode,
-			TraceRecord aRecord) {
-		List<ProviderParameterChecker.ParameterEvidence> evidence =
-				(List<ProviderParameterChecker.ParameterEvidence>)
-						aRecord.getExtractedData()
-								.get("translatedParameterEvidence");
-		if (evidence == null) {
-			evidence = List.of();
-		}
-		String parameterStore = aRecord.getTraceLine()
-				.getAuxiliaryData()
-				.get("providerIndependentParameterStore");
-		String firstDifference = "";
-		List<String> expectedParameterNames =
-				observedParameterNames(aProvider);
-		if (expectedParameterNames.stream().noneMatch(name ->
-				providerParameterCheckers.containsKey(parameterCheckerKey(aProvider, name)))) {
-			return "no supported parameter translation was traced for provider " + aProvider;
-		}
-		for (String expectedName : expectedParameterNames) {
-			if (!providerParameterCheckers.containsKey(parameterCheckerKey(aProvider, expectedName))) {
-				recordCheckerMessage(TraceProcessorMessageLevel.INFO, "additional_parameter provider=" + aProvider
-						+ " propertyName=" + expectedName + " checked=false reason=no_registered_rule");
-				continue;
-			}
-			ProviderParameterChecker.ParameterEvidence item =
-					parameterEvidence(evidence, expectedName);
-			if (item == null) {
-				recordCheckerMessage(
-						TraceProcessorMessageLevel.ERROR,
-						"generic_parameter_name_value_match provider="
-								+ aProvider
-								+ " mode="
-								+ aMode
-								+ " propertyName="
-								+ expectedName
-								+ " translationPresent=false match=false traceLine="
-								+ traceLineLocation(aRecord));
-				recordError(
-						TraceFilesProcessorError
-								.GENERIC_PARAMETER_NAME_OR_VALUE_MISSING);
-				if (firstDifference.isEmpty()) {
-					firstDifference = "parameter translation missing: "
-							+ expectedName;
-				}
-				continue;
-			}
-			boolean genericMatch = genericStoreContains(
-					parameterStore,
-					item.propertyName(),
-					item.propertyValue());
-			recordCheckerMessage(
-					genericMatch
-							? TraceProcessorMessageLevel.INFO
-							: TraceProcessorMessageLevel.ERROR,
-					"generic_parameter_name_value_match provider="
-							+ aProvider
-							+ " mode="
-							+ aMode
-							+ " propertyName="
-							+ item.propertyName()
-							+ " propertyValue=\""
-							+ String.valueOf(item.propertyValue())
-									.replace("\"", "'")
-							+ "\" match="
-							+ genericMatch
-							+ " traceLine="
-							+ traceLineLocation(aRecord));
-			if (!genericMatch) {
-				recordError(
-						TraceFilesProcessorError
-								.GENERIC_PARAMETER_NAME_OR_VALUE_MISSING);
-				if (firstDifference.isEmpty()) {
-					firstDifference = "generic store lacks "
-							+ item.propertyName()
-							+ "="
-							+ item.propertyValue();
-				}
-			}
-			ProviderParameterChecker checker =
-					providerParameterCheckers.get(
-							parameterCheckerKey(
-									aProvider,
-									item.propertyName()));
-			ProviderParameterChecker.ParameterEvidence completeEvidence =
-					new ProviderParameterChecker.ParameterEvidence(
-							item.propertyName(),
-							item.propertyValue(),
-							item.parameterAdapterClass(),
-							item.providerDependentTarget(),
-							item.providerDependentTargetState());
-			boolean targetMatches = checker != null
-					&& checker.isExpectedTarget(completeEvidence);
-			boolean providerAssigned = targetMatches
-					&& checker.isAssigned(completeEvidence);
-			recordCheckerMessage(
-					providerAssigned
-							? TraceProcessorMessageLevel.INFO
-							: TraceProcessorMessageLevel.ERROR,
-					"provider_parameter_assigned provider="
-							+ aProvider
-							+ " mode="
-							+ aMode
-							+ " propertyName="
-							+ item.propertyName()
-							+ " checkerRegistered="
-							+ (checker != null)
-							+ " targetMatches="
-							+ targetMatches
-							+ " assigned="
-							+ providerAssigned
-							+ " traceLine="
-							+ traceLineLocation(aRecord));
-			if (!providerAssigned) {
-				recordError(
-						TraceFilesProcessorError
-								.PROVIDER_PARAMETER_NOT_ASSIGNED);
-				if (firstDifference.isEmpty()) {
-					firstDifference = "provider parameter not assigned: "
-							+ item.propertyName();
-				}
-			}
-		}
-		return firstDifference;
-	}
-
-	private ProviderParameterChecker.ParameterEvidence parameterEvidence(
-			List<ProviderParameterChecker.ParameterEvidence> someEvidence,
-			String aPropertyName) {
-		for (ProviderParameterChecker.ParameterEvidence evidence : someEvidence) {
-			if (aPropertyName.equals(evidence.propertyName())) {
-				return evidence;
-			}
-		}
-		return null;
-	}
-
-	@SuppressWarnings("unchecked")
-	private List<String> observedParameterNames(String aProvider) {
-		java.util.LinkedHashSet<String> result =
-				new java.util.LinkedHashSet<>();
-		for (StreamingMode mode : StreamingMode.values()) {
-			for (TraceRecord record : requestRecords(aProvider, mode)) {
-				Object value = record.getExtractedData()
-						.get("translatedParameterEvidence");
-				if (!(value instanceof List<?>)) {
-					continue;
-				}
-				for (ProviderParameterChecker.ParameterEvidence evidence :
-						(List<ProviderParameterChecker.ParameterEvidence>) value) {
-					if (!isBlank(evidence.propertyName())) {
-						result.add(evidence.propertyName());
-					}
-				}
-			}
-		}
-		return List.copyOf(result);
-	}
-
-	private boolean genericStoreContains(
-			String aStoreDump,
-			String aPropertyName,
-			String aPropertyValue) {
-		if (isBlank(aStoreDump) || isBlank(aPropertyName)) {
-			return false;
-		}
-		return providerIndependentKeyValueComparator.compare(
-				aStoreDump,
-				Map.of(aPropertyName, aPropertyValue)).matches();
-	}
-
-	private String parameterCheckerKey(
-			String aProvider,
-			String aParameterName) {
-		return String.valueOf(aProvider).trim().toLowerCase()
-				+ "\u0000"
-				+ String.valueOf(aParameterName).trim().toLowerCase();
+	private String parameterEvidenceDifference(String provider, TraceRecord record) {
+		ProviderParameterChecker checker = providerParameterCheckers.get(TraceProviderNames.canonical(provider));
+		if (checker == null) throw new IllegalStateException("No native parameter checker configured for " + provider);
+		return checker.difference(record);
 	}
 
 	public TraceCheckResult checkStreamingChunksReflectedInNextContextWindow() {
@@ -5059,11 +4906,7 @@ public class GenericTracesFileProcessor implements TraceFilesProcessor {
 		if (!isBlank(model)) {
 			return model;
 		}
-		Map<String, String> values = canonicalPropertyValues(
-				aRecord.getTraceLine()
-						.getAuxiliaryData()
-						.get("providerIndependentParameterStore"));
-		return values.getOrDefault(eduAI.properties.AIPropertyNames.CURRENT_MODELS, "");
+		return ""; // The older overload carries no explicit model; do not infer a generic key.
 	}
 
 	private Map<String, String> canonicalPropertyValues(String aDump) {

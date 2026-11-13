@@ -29,12 +29,10 @@ public final class StudentReportCompatibilityTest {
 		require(registry.difference(source, "PROMPT_TOKEN_COUNT", "99") != null, "bad aliased metadata accepted");
 		require(registry.difference(source, "arbitrary student name", "12") == null, "arbitrary metadata name rejected");
 		require(registry.difference(source, "arbitrary student name", "99999") != null, "arbitrary name bypassed value checking");
-		var checker = new TextProviderParameterChecker("Ollama", "temperature", "Options", "temperature=");
+		var checker = new NativeParameterValues("Ollama");
 		String target = TraceObjectPrinter.format("target", new LinkedHashMap<>(Map.of("temperature", 0.4)));
-		var evidence = new ProviderParameterChecker.ParameterEvidence("temperature", "0.4", "sample.Adapter", target, target);
-		require(checker.isExpectedTarget(evidence) && checker.isAssigned(evidence), "options map rejected");
-		var wrong = new ProviderParameterChecker.ParameterEvidence("temperature", "0.9", "sample.Adapter", target, target);
-		require(!checker.isAssigned(wrong), "wrong options map value accepted");
+		require(new java.math.BigDecimal("0.4").compareTo(checker.read(target).get("temperature")) == 0, "options map rejected");
+		require(new java.math.BigDecimal("0.9").compareTo(checker.read(target).get("temperature")) != 0, "wrong options map value accepted");
 		for (String name : List.of("GEMINI", "gemini", "GeMiNi")) require(TraceProviderNames.canonical(name).equals("Gemini"), "case not normalized");
 		System.out.println("StudentReportCompatibilityTest passed");
 	}

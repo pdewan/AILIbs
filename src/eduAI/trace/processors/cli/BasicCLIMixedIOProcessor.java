@@ -27,8 +27,32 @@ public final class BasicCLIMixedIOProcessor implements CLIMixedIOProcessor {
     private static final Pattern START = Pattern.compile("^@@start \\[(\\d+)\\] (.+)$");
     private static final Pattern END = Pattern.compile(
             "^@@end \\[(\\d+)\\] \\(Time: \\d{2,}:[0-5]\\d:[0-5]\\d\\.\\d{3}\\)$");
-    private static final Pattern STREAM = Pattern.compile("^@@STREAM\\[([^]\\r\\n]+)\\] (.*)$");
     private final CLIInputProcessor inputProcessor;
+
+    /** Compare the body with either a body-only display or the complete printed
+     * record. Delimiters use the same grammar as captured I/O; malformed or
+     * mismatched command numbers never make a body match. */
+    public static boolean matchesDisplayedOutput(int command, String expected, String actual) {
+        if (expected == null || actual == null) return false;
+        String normalized = actual.replace("\r\n", "\n");
+        String body = expected.replace("\r\n", "\n");
+        if (normalized.equals(body) || normalized.equals(body + "\n")) return true;
+        String record = normalized.endsWith("\n") ? normalized.substring(0, normalized.length()-1) : normalized;
+        String[] lines = record.split("\n", -1);
+        Matcher echo = ECHO.matcher(lines[0]);
+        if (!echo.matches() || !echo.group(1).equals(Integer.toString(command))) return false;
+        if (lines.length == 1) return body.isEmpty();
+        if (lines.length < 3) return false;
+        Matcher start = START.matcher(lines[1]), end = END.matcher(lines[lines.length-1]);
+        if (!start.matches() || !end.matches()
+                || !start.group(1).equals(echo.group(1)) || !end.group(1).equals(echo.group(1))) return false;
+        Map<String,String> fields;
+        try { fields = attributes(start.group(2)); }
+        catch (IllegalArgumentException malformed) { return false; }
+        if (!("true".equals(fields.get("success")) || "false".equals(fields.get("success")))
+                || fields.get("conversation_id") == null) return false;
+        return body.equals(String.join("\n", java.util.Arrays.copyOfRange(lines, 2, lines.length-1)));
+    }
 
     public BasicCLIMixedIOProcessor(CLIInputProcessor inputProcessor) {
         this.inputProcessor = Objects.requireNonNull(inputProcessor);
@@ -58,14 +82,18 @@ public final class BasicCLIMixedIOProcessor implements CLIMixedIOProcessor {
                 // EduCopilot emits this optional status before the corresponding input echo.
                 // It is observational output, never a source of expected prompts or properties.
                 if (line.startsWith(COMPACTION_NOTICE_PREFIX)) { index++; continue; }
-                Matcher stream = STREAM.matcher(line);
+                Matcher stream = CLIOutputSyntax.STREAM_LINE.matcher(line);
                 if (stream.matches()) {
                     chunks.add(new Chunk(stream.group(1), stream.group(2)));
                     index++;
                     continue;
                 }
                 Matcher echo = ECHO.matcher(line);
-                if (!echo.matches()) return failure(index + 1, "Expected an input echo or streaming marker");
+                if (!echo.matches()) return failure(index + 1, "Expected an input echo or streaming marker; received: "
+                    + line + ". Input echoes must be [<command number>] <input>, for example [1] /prop stream. "
+                    + "Ordinary output must follow its input echo inside @@start [<command number>] "
+                    + "success=<true|false> conversation_id=<id> and @@end [<command number>] records. "
+                    + "A leading > prompt is not a numbered input echo.");
                 int number = Integer.parseInt(echo.group(1));
                 if(number<=0 || !observations.isEmpty() && number<=observations.get(observations.size()-1).number())
                     return failure(index+1,"Echo command numbers must be positive and strictly increasing");

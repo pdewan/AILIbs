@@ -7,6 +7,29 @@ import java.util.regex.*;
  * Accepts the lecture's system label and EduCopilot's system_prompt label.
  * Content between labels may span lines; types and metadata keys are not fixed. */
 public final class CLIOutputSyntax {
+    private static final String STREAM_PREFIX = "@@STREAM";
+    static final Pattern STREAM_LINE = Pattern.compile("^" + Pattern.quote(STREAM_PREFIX) + "\\[([^]\\r\\n]+)\\] (.*)$");
+
+    /** A record terminator belongs to println; a payload newline has another prefixed line. */
+    public static String streamRecord(String output) {
+        String normalized = output.replace("\r\n", "\n");
+        return normalized.endsWith("\n") ? normalized.substring(0, normalized.length() - 1) : normalized;
+    }
+    static String streamOutput(String model, String text) {
+        String prefix = STREAM_PREFIX + "[" + model + "] ";
+        return prefix + text.replace("\r\n", "\n").replace("\n", "\n" + prefix);
+    }
+    public static String streamText(String model, String output) {
+        List<String> parts = new ArrayList<>();
+        for (String line : streamRecord(output).split("\n", -1)) {
+            var matcher = STREAM_LINE.matcher(line);
+            if (!matcher.matches() || !model.equals(matcher.group(1)))
+                throw new IllegalArgumentException("Expected " + STREAM_PREFIX + "[" + model + "] followed by a separator space");
+            parts.add(matcher.group(2));
+        }
+        return String.join("\n", parts);
+    }
+
     public static final int UNNUMBERED_SYSTEM=0;
     public enum Kind { PROPERTY, TRANSCRIPT, MESSAGES }
     public static final String USER="user", ASSISTANT="assistant", SYSTEM="system";
@@ -17,6 +40,10 @@ public final class CLIOutputSyntax {
     private static final Pattern GETTER=Pattern.compile("("+PROPERTY_NAME+") = (.+) \\(([^()\\r\\n]+)\\) \\[source: ([^]\\r\\n]+)](?: alternatives: (.+))?");
     private static final Pattern TURN=Pattern.compile("(?m)^\\[([^]\\r\\n]+)] ");
     private static final Pattern MESSAGE_LABEL=Pattern.compile("(?:(\\d+)\\.)?(user|assistant|system)");
+    static final String TRANSCRIPT_RESPONSE_PREFIX = "@@";
+    private static final Pattern TRANSCRIPT_ANSWER = Pattern.compile(
+            Pattern.quote(TRANSCRIPT_RESPONSE_PREFIX) + "\\[([^\\]\\r\\n]+)] (.*)", Pattern.DOTALL);
+
     private CLIOutputSyntax() { }
     public record Property(String name,String value,String type,String source,String alternatives) { }
     public record Turn(int number,String role,String content,String details) { }
@@ -61,6 +88,26 @@ public final class CLIOutputSyntax {
             result.add(new Saved(Integer.parseInt(row.label),row.body));
         }
         return List.copyOf(result);
+    }
+    private static void checkTranscriptSyntax(String body, CLIMixedIO io, int view, List<String> errors) {
+        // A prompt contributes one free-form input row. Its response rows each carry a model label.
+        // A valid response may appear out of order; the content check diagnoses that separately.
+        var prompts = new HashMap<Integer, String>();
+        for (var entry : io.entries()) {
+            if (entry.input().kind() == CLIInteraction.Kind.PROMPT) prompts.put(entry.number(), entry.input().rawInput().strip());
+        }
+        var inputsSeen = new HashSet<Integer>();
+        for (var row : transcript(body)) {
+            String input = prompts.get(row.number());
+            if (input == null) continue;
+            if (row.content().strip().equals(input) && inputsSeen.add(row.number())) continue;
+            var answer = TRANSCRIPT_ANSWER.matcher(row.content());
+            if (answer.matches() && !answer.group(1).isBlank()) continue;
+            if (!inputsSeen.add(row.number())) {
+                errors.add("Transcript " + view + ", command " + row.number()
+                        + ": expected " + TRANSCRIPT_RESPONSE_PREFIX + "[model] before the saved response");
+            }
+        }
     }
     public static List<Turn> messages(String body) {
         List<Turn> result=new ArrayList<>();
@@ -111,7 +158,7 @@ public final class CLIOutputSyntax {
                 String body=entry.output().get().body();
                 switch(kind) {
                     case PROPERTY -> properties(body,entry.input().kind()==CLIInteraction.Kind.PROPERTY_SET);
-                    case TRANSCRIPT -> transcript(body);
+                    case TRANSCRIPT -> checkTranscriptSyntax(body, io, entry.number(), errors);
                     case MESSAGES -> messages(body);
                 }
             } catch(IllegalArgumentException error) { errors.add("Input "+entry.number()+": "+error.getMessage()); }

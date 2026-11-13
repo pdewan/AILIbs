@@ -32,9 +32,9 @@ public final class CLIRequestInputMutations {
             if (firstTimeout == null) { firstTimeout = timeout; firstRequest = index; }
             else if (!changed && !timeout.equals(firstTimeout)) {
                 mutate(result, correct, "stale_timeout", index, PARAMETERS, timeout, firstTimeout,
-                        CLITraceExpectations.Check.SETTINGS, "CLI property " + AIPropertyNames.TIMEOUT);
+                        CLITraceExpectations.Check.SETTINGS, "Generic parameter store lacks native " + AIPropertyNames.TIMEOUT);
                 mutate(result, correct, "retroactive_timeout", firstRequest, PARAMETERS, firstTimeout, timeout,
-                        CLITraceExpectations.Check.SETTINGS, "CLI property " + AIPropertyNames.TIMEOUT);
+                        CLITraceExpectations.Check.SETTINGS, "Generic parameter store lacks native " + AIPropertyNames.TIMEOUT);
                 changed = true;
             }
             if (attachmentText != null && !retainedMutated) {

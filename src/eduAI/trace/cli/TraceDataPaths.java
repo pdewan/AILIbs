@@ -10,7 +10,7 @@ import eduAI.trace.TraceObjectPrinter;
  * toString calls. Map entry indices keep keys paired with their values.
  */
 public final class TraceDataPaths {
-    public static final String ID=".@identity", VALUE=".@value", ERROR=".@error";
+    public static final String ID=".@identity", VALUE=".@value", ERROR=".@error", NULL=".@null";
     private TraceDataPaths() { }
     public static Map<String,String> flatten(String root, Object value,
             Set<Class<?>> participants, boolean registry) {
@@ -21,7 +21,8 @@ public final class TraceDataPaths {
     private static void visit(String path, Object object, Map<String,String> result,
             IdentityHashMap<Object,String> seen, Set<Class<?>> participants,
             boolean registry, boolean root) {
-        if (object == null) { result.put(path+".@null", "true"); return; }
+        if (object == null) { result.put(path+NULL, "true"); return; }
+        if (object instanceof Class<?> type) { result.put(path+VALUE, type.getName()); return; }
         if (object instanceof String || object instanceof Character || object instanceof Boolean
                 || object instanceof Byte || object instanceof Short || object instanceof Integer
                 || object instanceof Long || object instanceof Float || object instanceof Double

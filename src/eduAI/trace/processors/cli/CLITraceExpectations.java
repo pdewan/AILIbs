@@ -10,6 +10,7 @@ import java.util.Map;
 import eduAI.trace.TraceTextSummary;
 import eduAI.trace.lib.StreamingMode;
 import eduAI.trace.processors.CanonicalTraceRequest;
+import eduAI.trace.processors.NativeParameterValues;
 import eduAI.trace.processors.GenericTracesFileProcessor.TraceMessage;
 import eduAI.trace.processors.TraceCheckResult;
 import eduAI.trace.processors.TraceRecord;
@@ -108,9 +109,19 @@ public final class CLITraceExpectations {
                 report(messages, errors, false, "Unreadable request" + where); continue;
             }
             if (check == Check.SETTINGS) {
-                report(messages, errors, expected.model().equals(generic.model()), "CLI model" + where
-                        + " expected=" + expected.model() + " actual=" + generic.model());
+                String explicitModel = record.getTraceLine().getAuxiliaryData().get(eduAI.trace.lib.LibTraceKeys.REQUEST_MODEL);
+                String store = record.getTraceLine().getAuxiliaryData().get(eduAI.trace.processors.RequestTraceFields.GENERIC_PARAMETERS);
+                boolean modelMatches = explicitModel != null && !explicitModel.isBlank()
+                    ? expected.model().equals(explicitModel)
+                    : new eduAI.trace.processors.ReflectiveValueCollector().collect(store).stream().anyMatch(leaf ->
+                        leaf.kind() == eduAI.trace.processors.ReflectiveValueCollector.ValueKind.STRING
+                        && TraceTextSummary.matches(expected.model(), leaf.value()));
+                report(messages, errors, modelMatches, "CLI model" + where
+                        + " expected=" + expected.model() + (explicitModel != null && !explicitModel.isBlank()
+                        ? " traced request model=" + explicitModel
+                        : " (older request trace: require the selected model as a generic store value; no key name is prescribed)"));
                 report(messages, errors, expected.mode() == record.getId().mode(), "CLI streaming mode" + where);
+                var parameters = new NativeParameterValues(record.getId().provider()).values(record);
                 for (String name : CLISemanticEvidence.NUMERIC_PROPERTIES) {
                     Object value = expected.properties().get(name);
                     if (value == null) continue;
@@ -118,18 +129,14 @@ public final class CLITraceExpectations {
                     // still require this value to survive the switch back to Ollama.
                     if (name.equals(eduAI.properties.AIPropertyNames.NUM_CTX)
                             && "Gemini".equalsIgnoreCase(record.getId().provider())) continue;
-                    String key = name;
-                    double number = ((Number) value).doubleValue();
-                    if (name.equals(eduAI.properties.AIPropertyNames.TIMEOUT) && !generic.parameters().containsKey(key)) {
-                        key = "timeout_milliseconds";
-                        number = java.util.concurrent.TimeUnit.SECONDS.toMillis(((Number) value).longValue());
-                    }
-                    String observed = generic.parameters().get(key);
-                    boolean matches = false;
-                    try { matches = Double.compare(number, Double.parseDouble(observed)) == 0; }
-                    catch (NullPointerException | NumberFormatException ignored) { }
+                    var number = new java.math.BigDecimal(value.toString());
+                    var observed = parameters.get(name);
+                    boolean matches = observed != null && number.compareTo(observed) == 0;
                     report(messages, errors, matches, "CLI property " + name + where
-                            + " expected=" + number + " actual=" + observed);
+                            + " expected=" + number + " native=" + observed
+                            + (name.equals(eduAI.properties.AIPropertyNames.TIMEOUT) ? " (seconds)" : "")
+                            + (observed == null ? " (required native setting is not evidenced; trace the native configuration or client after applying "
+                                + name + ". A generic value or intermediate wrapper alone does not prove the native assignment)" : ""));
                 }
             } else {
                 for (var request : List.of(generic, nativeRequest)) {

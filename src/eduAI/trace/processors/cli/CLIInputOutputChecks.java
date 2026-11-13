@@ -113,6 +113,7 @@ public final class CLIInputOutputChecks {
     }
     private static void transcriptEntries(CLICommandResultContext context,List<String> errors) {
         var actual=transcript(context.result().text());List<Saved> wanted=new ArrayList<>();
+        Set<Integer> responseRows = new HashSet<>();
         for(var entry:context.history()) {
             wanted.add(new Saved(entry.number(),entry.input().rawInput().strip()));
             if(entry.output().isEmpty() || !entry.output().get().success()) continue;
@@ -122,12 +123,17 @@ public final class CLIInputOutputChecks {
                 var models=(List<?>)entry.input().properties().get(AIPropertyNames.CURRENT_MODELS);
                 var answers=context.priorResponses().get(entry.input().inputOrdinal());
                 if(models.size()!=answers.size()) { errors.add("Captured model-answer count differs at "+entry.number());continue; }
-                for(int i=0;i<answers.size();i++) wanted.add(new Saved(entry.number(),"@@["+models.get(i)+"] "+answers.get(i).stripTrailing()));
+                for (int i = 0; i < answers.size(); i++) {
+                    responseRows.add(wanted.size());
+                    wanted.add(new Saved(entry.number(), "[" + models.get(i) + "] " + answers.get(i).stripTrailing()));
+                }
             }
         }
         if(actual.size()!=wanted.size()) { errors.add("Transcript entry count differs at "+context.current().number());return; }
         for(int i=0;i<wanted.size();i++) {
             var a=actual.get(i);var w=wanted.get(i);String text=a.content();
+            if (responseRows.contains(i) && text.startsWith(TRANSCRIPT_RESPONSE_PREFIX))
+                text = text.substring(TRANSCRIPT_RESPONSE_PREFIX.length());
             if(a.number()!=w.number() || !text.strip().equals(w.content().strip()))
                 errors.add("Transcript entry/order differs at "+context.current().number()+", entry "+i);
         }

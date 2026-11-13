@@ -122,7 +122,7 @@ public final class MinimalCLIContractChecks {
                 if (sent==null || !id(d.get(RESULT+ID))
                         || !Objects.equals(sent.get(RESULT+ID),d.get(RESULT+ID)))
                     fail(errors,"result-delivery","Received object identity differs from notification for command "+command);
-                if (!sameOutput(expected.commandOutput.get(command),d.get(OUTPUT)))
+                if (includes(selected,"command-io") && !BasicCLIMixedIOProcessor.matchesDisplayedOutput(command,expected.commandOutput.get(command),d.get(OUTPUT)))
                     fail(errors,"command-io","Output differs for "+command);
                 displayed.add(command);
                 if (!receipts.add(command+":"+d.get(OBSERVER))) fail(errors,"display-count","Duplicate receipt by the same observer");
@@ -165,7 +165,8 @@ public final class MinimalCLIContractChecks {
                     if (wanted.command!=command || !wanted.model.equals(d.get(MODEL))
                             || !id(wanted.identity) || !Objects.equals(wanted.identity,d.get(CHUNK+ID)))
                         fail(errors,"stream-sequence","Chunk differs at "+streamIndex);
-                    if (wanted.output!=null && !Objects.equals(normalizeNewlines(wanted.output),normalizeNewlines(d.get(OUTPUT))))
+                    if (wanted.output!=null && !Objects.equals(CLIOutputSyntax.streamRecord(wanted.output),
+                            d.get(OUTPUT)==null ? null : CLIOutputSyntax.streamRecord(d.get(OUTPUT))))
                         fail(errors,"stream-io","Printed output differs at "+streamIndex);
                 }
                 streamIndex++;
@@ -353,10 +354,6 @@ public final class MinimalCLIContractChecks {
         return prefix(data,root).entrySet().stream().filter(e->e.getKey().endsWith(VALUE_SUFFIX))
             .map(Map.Entry::getValue).toList();
     }
-    private static boolean sameOutput(String expected, String actual) {
-        return expected!=null && actual!=null && normalizeNewlines(expected).strip().equals(normalizeNewlines(actual).strip());
-    }
-    private static String normalizeNewlines(String value) { return value==null ? null : value.replace("\r\n","\n"); }
     public static boolean mapsIdentity(Map<String,String> data,String key,String identity) {
         return mapped(data,key,ID,identity);
     }

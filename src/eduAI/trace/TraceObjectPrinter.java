@@ -397,6 +397,7 @@ public final class TraceObjectPrinter {
 
 	private static boolean isSimpleValue(Class<?> aClass) {
 		return aClass.isPrimitive()
+				|| Class.class.equals(aClass)
 				|| String.class.equals(aClass)
 				|| Character.class.equals(aClass)
 				|| Boolean.class.equals(aClass)
@@ -442,6 +443,7 @@ public final class TraceObjectPrinter {
 	}
 
 	private static String simpleValue(Object anObject) {
+		if (anObject instanceof Class<?> type) return "\"" + escaped(type.getName()) + "\"";
 		if (anObject instanceof String text) {
 			return "\"" + escaped(COMPACT.get() ? TraceTextSummary.compact(text, SYSTEM_TEXT.get()) : text) + "\"";
 		}
